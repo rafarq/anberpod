@@ -1,0 +1,10 @@
+.venv/
+.local-data/
+build/
+dist/
+/screenshots/
+artifacts/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage

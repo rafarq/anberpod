@@ -1,0 +1,8 @@
+# Copy to AnberPod/data/config/config.toml and set mode 0600 when supported.
+# Never place real keys in a release directory or repository checkout.
+[podcast_index]
+api_key = ""
+api_secret = ""
+
+[settings]
+download_limit_bytes = 2147483648
