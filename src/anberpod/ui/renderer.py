@@ -1,14 +1,30 @@
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-from .state import PlayerViewModel, ScreenModel
+from .state import HOME_ROUTES, PlayerViewModel, Route, ScreenModel
 
 
 WIDTH = 640
 HEIGHT = 480
+HOME_ICON_DIR = Path(__file__).resolve().parents[1] / "assets" / "icons"
+HOME_ICON_FILES = {
+    Route.EXPLORE: "explore.png",
+    Route.SEARCH: "search.png",
+    Route.SUBSCRIPTIONS: "subscriptions.png",
+    Route.DOWNLOADS: "downloads.png",
+    Route.SETTINGS: "settings.png",
+}
+HOME_CARD_BOXES = (
+    (18, 116, 212, 268),
+    (223, 116, 417, 268),
+    (428, 116, 622, 268),
+    (120, 280, 314, 432),
+    (326, 280, 520, 432),
+)
 
 
 def _font(size: int):  # type: ignore[no-untyped-def]
@@ -18,6 +34,19 @@ def _font(size: int):  # type: ignore[no-untyped-def]
         return ImageFont.load_default()
 
 
+@lru_cache(maxsize=len(HOME_ICON_FILES))
+def _load_icon(filename: str) -> Image.Image | None:
+    """Load and size a packaged Home icon once, independent of the cwd."""
+    try:
+        with Image.open(HOME_ICON_DIR / filename) as source:
+            source.load()
+            icon = source.convert("RGBA")
+    except (OSError, ValueError):
+        return None
+    icon.thumbnail((86, 86), Image.Resampling.LANCZOS)
+    return icon
+
+
 class Renderer:
     def __init__(self) -> None:
         self.title_font = _font(30)
@@ -25,6 +54,9 @@ class Renderer:
         self.small_font = _font(16)
 
     def render(self, screen: ScreenModel) -> Image.Image:
+        if screen.route is Route.HOME:
+            return self._render_home(screen)
+
         image = Image.new("RGB", (WIDTH, HEIGHT), "#0a1020")
         draw = ImageDraw.Draw(image)
         draw.rectangle((0, 0, WIDTH, 68), fill="#16233f")
@@ -56,6 +88,71 @@ class Renderer:
         draw.rectangle((0, 444, WIDTH, HEIGHT), fill="#111b30")
         draw.text((320, 462), screen.footer, font=self.small_font, fill="#9eb0c9", anchor="mm")
         return image
+
+    def _render_home(self, screen: ScreenModel) -> Image.Image:
+        image = Image.new("RGB", (WIDTH, HEIGHT), "#0a1020")
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((0, 0, WIDTH, 68), fill="#16233f")
+        draw.rectangle((0, 68, 8, HEIGHT), fill="#36c2b4")
+        draw.text((26, 16), "ANBERPOD", font=self.title_font, fill="#f6f8ff")
+        draw.text((610, 22), "OFFLINE", font=self.small_font, fill="#8ca0bd", anchor="ra")
+        draw.text((26, 79), screen.title, font=self.item_font, fill="#78e0d4")
+
+        for index, (route, box) in enumerate(zip(HOME_ROUTES, HOME_CARD_BOXES)):
+            left, top, right, bottom = box
+            selected = index == screen.focus
+            if selected:
+                draw.rounded_rectangle(
+                    (left - 3, top - 3, right + 3, bottom + 3),
+                    radius=17,
+                    outline="#7152a3",
+                    width=3,
+                )
+            draw.rounded_rectangle(
+                box,
+                radius=14,
+                fill="#302653" if selected else "#151f35",
+                outline="#d8b8ff" if selected else "#34435e",
+                width=4 if selected else 2,
+            )
+
+            center_x = (left + right) // 2
+            icon_center_y = top + 58
+            icon = _load_icon(HOME_ICON_FILES[route])
+            if icon is None:
+                self._draw_icon_fallback(draw, center_x, icon_center_y)
+            else:
+                image.paste(
+                    icon,
+                    (center_x - icon.width // 2, icon_center_y - icon.height // 2),
+                    icon,
+                )
+
+            label = screen.items[index] if index < len(screen.items) else route.value.title()
+            draw.text(
+                (center_x, bottom - 26),
+                label,
+                font=self.item_font,
+                fill="#ffffff" if selected else "#dce3ee",
+                anchor="mm",
+            )
+
+        draw.rectangle((0, 444, WIDTH, HEIGHT), fill="#111b30")
+        draw.text((320, 462), screen.footer, font=self.small_font, fill="#9eb0c9", anchor="mm")
+        return image
+
+    def _draw_icon_fallback(self, draw: ImageDraw.ImageDraw, center_x: int, center_y: int) -> None:
+        draw.ellipse(
+            (center_x - 34, center_y - 34, center_x + 34, center_y + 34),
+            fill="#6f35d5",
+            outline="#e2caff",
+            width=4,
+        )
+        draw.line((center_x, center_y - 17, center_x, center_y + 7), fill="#ffffff", width=7)
+        draw.ellipse(
+            (center_x - 4, center_y + 15, center_x + 4, center_y + 23),
+            fill="#ffffff",
+        )
 
     def save(self, screen: ScreenModel, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

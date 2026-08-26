@@ -19,7 +19,7 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-anberpod = ["migrations/*.sql"]
+anberpod = ["migrations/*.sql", "assets/icons/*.png"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

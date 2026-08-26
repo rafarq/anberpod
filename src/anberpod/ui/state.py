@@ -208,10 +208,14 @@ class AppState:
                 self._item_count = len(HOME_ROUTES)
             return
         if self.route is Route.HOME:
-            if event.action is InputAction.DOWN:
-                self.focus = min(self.focus + 1, len(HOME_ROUTES) - 1)
+            if event.action is InputAction.LEFT:
+                self.focus = {1: 0, 2: 1, 4: 3}.get(self.focus, self.focus)
+            elif event.action is InputAction.RIGHT:
+                self.focus = {0: 1, 1: 2, 3: 4}.get(self.focus, self.focus)
+            elif event.action is InputAction.DOWN:
+                self.focus = {0: 3, 1: 3, 2: 4}.get(self.focus, self.focus)
             elif event.action is InputAction.UP:
-                self.focus = max(self.focus - 1, 0)
+                self.focus = {3: 0, 4: 2}.get(self.focus, self.focus)
             elif event.action is InputAction.ACCEPT:
                 self._home_focus = self.focus
                 self.route = HOME_ROUTES[self.focus]
