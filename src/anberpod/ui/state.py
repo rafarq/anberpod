@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 
 from anberpod.domain.models import DownloadState, InputAction, InputEvent, PlaybackState
 
@@ -99,6 +100,7 @@ class PlayerViewModel:
     duration_ms: int | None
     local: bool
     error_code: str | None = None
+    artwork_path: Path | None = None
 
     @property
     def progress(self) -> float:

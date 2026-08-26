@@ -23,7 +23,8 @@ from anberpod.domain.models import (
     PlaybackState,
     Podcast,
 )
-from anberpod.domain.ports import Clock, ConnectivityProbe, MonotonicClock, PlaybackEngine
+from anberpod.domain.ports import ArtworkCachePort, Clock, ConnectivityProbe, MonotonicClock, PlaybackEngine
+from anberpod.services.artwork import ArtworkCache
 from anberpod.logging import configure_logging
 from anberpod.services.startup import recover_local_state
 from anberpod.services.discovery import CatalogCache, DiscoveryService
@@ -49,6 +50,7 @@ class Application:
     logger: object
     discovery: DiscoveryService
     playback: PlaybackController
+    artwork_cache: ArtworkCachePort
     _shutdown_logged: bool = False
     _selected_podcast_id: str | None = None
     _import_results: tuple[ImportPreview, ...] = ()
@@ -70,6 +72,7 @@ class Application:
         playback_engine: PlaybackEngine | None = None,
         playback_monotonic: MonotonicClock | None = None,
         playback_clock: Clock | None = None,
+        artwork_cache: ArtworkCachePort | None = None,
     ) -> "Application":
         logger = configure_logging(paths.logs / "anberpod.log")
         repositories = Repositories.open(paths.database)
@@ -111,7 +114,11 @@ class Application:
             playback_monotonic,
             playback_clock,
         )
-        return cls(paths, repositories, connectivity, AppState(), logger, discovery, playback)
+        artwork_cache = artwork_cache or ArtworkCache(
+            AtomicFiles(paths.root),
+            PolicyHttpTransport(UrllibHttpAdapter()),
+        )
+        return cls(paths, repositories, connectivity, AppState(), logger, discovery, playback, artwork_cache)
 
     def handle(self, event: InputEvent) -> None:
         if self.state.route is Route.PLAYER:
@@ -182,6 +189,10 @@ class Application:
     def play_episode(self, episode: Episode, *, restart_completed: bool = False) -> None:
         self.playback.play(episode, restart_completed=restart_completed)
         podcast = self.repositories.podcasts.get(episode.podcast_id)
+        artwork_path = self.artwork_cache.ensure_cached(
+            podcast.image_url if podcast else None,
+            online=self.connectivity.is_online(),
+        )
         self._player = PlayerViewModel(
             episode.id,
             episode.title,
@@ -190,6 +201,7 @@ class Application:
             self.playback.position_ms,
             self.playback.duration_ms,
             bool(self.playback.source and self.playback.source.local),
+            artwork_path=artwork_path,
         )
         self.state.show(Route.PLAYER)
 
@@ -281,6 +293,7 @@ class Application:
                 self.playback.duration_ms,
                 bool(self.playback.source and self.playback.source.local),
                 self.playback.failure.code if self.playback.failure else None,
+                self._player.artwork_path,
             ).screen()
         elif selected is Route.EXPLORE:
             items = self._categories.items if self._categories is not None else ()

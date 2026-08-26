@@ -120,3 +120,38 @@ def test_podcast_episode_row_opens_player_with_a(tmp_path: Path) -> None:
     assert app.state.route is Route.PLAYER
     assert app.screen().items[0] == episode.title
     assert engine.calls[0][0] == "play"
+
+
+def test_play_episode_resolves_podcast_cover_before_render_and_prefers_offline_cache(tmp_path: Path) -> None:
+    class RecordingArtworkCache:
+        def __init__(self, path: Path) -> None:
+            self.path = path
+            self.calls: list[tuple[str | None, bool]] = []
+
+        def ensure_cached(self, url: str | None, *, online: bool) -> Path | None:
+            self.calls.append((url, online))
+            return self.path
+
+    paths = DataPaths.create(tmp_path / "data")
+    clock = FakeClock()
+    engine = FakeEngine()
+    cached_cover = paths.cache / "artwork" / "cached.png"
+    artwork = RecordingArtworkCache(cached_cover)
+    app = Application.open(
+        paths,
+        Offline(),
+        playback_engine=engine,
+        playback_monotonic=clock,
+        playback_clock=clock,
+        artwork_cache=artwork,
+    )
+    app.repositories.podcasts.save(Podcast(
+        "pod", "https://example.test/feed", "Saved Science",
+        image_url="https://images.example.test/show.png?signature=private",
+    ))
+    episode = Episode("ep", "pod", "guid:ep", "https://cdn.example.test/ep.mp3", "Episode")
+
+    app.play_episode(episode)
+
+    assert artwork.calls == [("https://images.example.test/show.png?signature=private", False)]
+    assert app._player is not None and app._player.artwork_path == cached_cover

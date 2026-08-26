@@ -27,5 +27,9 @@ def test_headless_cli_renders_review_screens_and_exits_cleanly(tmp_path: Path) -
     for path in render_dir.glob("*.png"):
         with Image.open(path) as image:
             assert image.size == (640, 480)
+    cached_covers = list((data_dir / "cache" / "artwork").glob("*.png"))
+    assert len(cached_covers) == 1
+    with Image.open(render_dir / "player.png") as player:
+        assert player.getpixel((116, 216)) == (246, 248, 255)
     assert "Saved Science" in result.stdout
     assert (data_dir / "logs" / "anberpod.log").is_file()

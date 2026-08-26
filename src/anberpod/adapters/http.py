@@ -3,6 +3,7 @@ from __future__ import annotations
 import ipaddress
 import socket
 import ssl
+import time
 import urllib.error
 import urllib.request
 import zlib
@@ -92,15 +93,27 @@ class PolicyHttpTransport:
         resolver: AddressResolver = system_public_addresses,
         *,
         max_redirects: int = 5,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self.adapter = adapter
         self.resolver = resolver
         self.max_redirects = max_redirects
+        self.monotonic = monotonic
 
     def request(self, policy: RequestPolicy, url: str, headers: Mapping[str, str]) -> HttpResponse:
+        started = self.monotonic()
+
+        def check_deadline() -> None:
+            if (
+                policy.total_timeout_seconds is not None
+                and self.monotonic() - started > policy.total_timeout_seconds
+            ):
+                raise HttpPolicyError("request exceeded total time limit", code="total_timeout")
+
         current, addresses = normalize_public_url(url, self.resolver)
         initial_scheme = urlsplit(current).scheme
         for redirects in range(self.max_redirects + 1):
+            check_deadline()
             response = self.adapter.open(current, headers, policy, addresses)
             if response.status in {301, 302, 303, 307, 308}:
                 location = next((value for key, value in response.headers.items() if key.lower() == "location"), None)
@@ -127,12 +140,14 @@ class PolicyHttpTransport:
             body = bytearray()
             try:
                 for chunk in response.body_chunks:
+                    check_deadline()
                     decoded = decompressor.decompress(chunk) if decompressor is not None else chunk
                     body.extend(decoded)
                     if len(body) > policy.max_bytes:
                         raise HttpPolicyError("response body exceeds limit", code="body_too_large")
                 if decompressor is not None:
                     body.extend(decompressor.flush())
+                check_deadline()
             except zlib.error as exc:
                 raise HttpPolicyError("invalid compressed response", code="invalid_encoding") from exc
             if len(body) > policy.max_bytes:

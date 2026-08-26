@@ -3,13 +3,27 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from .state import HOME_ROUTES, PlayerViewModel, Route, ScreenModel
 
 
 WIDTH = 640
 HEIGHT = 480
+PLAYER_ARTWORK_BOX = (32, 132, 200, 300)
+PLAYER_LAYOUT = {
+    "artwork": PLAYER_ARTWORK_BOX,
+    "title": (224, 132, 608, 192),
+    "podcast": (224, 200, 608, 224),
+    "state": (224, 232, 608, 262),
+    "time": (32, 312, 300, 344),
+    "progress": (32, 350, 608, 371),
+    "source": (32, 382, 608, 404),
+    "error": (24, 406, 616, 439),
+    "controls": (0, 444, 640, 480),
+}
+_RESAMPLING = getattr(Image, "Resampling", Image)
+_LANCZOS = getattr(_RESAMPLING, "LANCZOS", 1)
 HOME_ICON_DIR = Path(__file__).resolve().parents[1] / "assets" / "icons"
 HOME_ICON_FILES = {
     Route.EXPLORE: "explore.png",
@@ -43,15 +57,16 @@ def _load_icon(filename: str) -> Image.Image | None:
             icon = source.convert("RGBA")
     except (OSError, ValueError):
         return None
-    icon.thumbnail((86, 86), Image.Resampling.LANCZOS)
+    icon.thumbnail((86, 86), _LANCZOS)
     return icon
 
 
 class Renderer:
-    def __init__(self) -> None:
+    def __init__(self, *, artwork_root: Path | None = None) -> None:
         self.title_font = _font(30)
         self.item_font = _font(23)
         self.small_font = _font(16)
+        self.artwork_root = artwork_root.expanduser().resolve() if artwork_root is not None else None
 
     def render(self, screen: ScreenModel) -> Image.Image:
         if screen.route is Route.HOME:
@@ -165,24 +180,100 @@ class Renderer:
         draw.rectangle((0, 68, 8, HEIGHT), fill="#36c2b4")
         draw.text((26, 16), "ANBERPOD", font=self.title_font, fill="#f6f8ff")
         draw.text((610, 22), player.state.value.upper(), font=self.small_font, fill="#78e0d4", anchor="ra")
-        draw.text((26, 88), "Now Playing", font=self.title_font, fill="#78e0d4")
-        title = player.episode_title if len(player.episode_title) <= 38 else player.episode_title[:35] + "..."
-        podcast = player.podcast_title if len(player.podcast_title) <= 52 else player.podcast_title[:49] + "..."
-        draw.text((32, 145), title, font=self.item_font, fill="#ffffff")
-        draw.text((32, 183), podcast, font=self.small_font, fill="#9eb0c9")
+        draw.text((26, 84), "Now Playing", font=self.item_font, fill="#78e0d4")
+        self._draw_player_artwork(image, draw, player.artwork_path)
+        title_lines = self._wrap_lines(draw, player.episode_title, self.item_font, 382, 2)
+        for index, line in enumerate(title_lines):
+            draw.text((224, 134 + index * 29), line, font=self.item_font, fill="#ffffff")
+        podcast = self._ellipsize(draw, player.podcast_title, self.small_font, 382)
+        draw.text((224, 202), podcast, font=self.small_font, fill="#9eb0c9")
+        state_text = player.state.value.upper()
+        state_width = draw.textbbox((0, 0), state_text, font=self.small_font)[2]
+        draw.rounded_rectangle((224, 232, 244 + state_width, 260), radius=7, fill="#263d4b", outline="#36c2b4")
+        draw.text((234, 238), state_text, font=self.small_font, fill="#78e0d4")
         screen = player.screen()
-        draw.text((32, 231), screen.items[3], font=self.item_font, fill="#f6f8ff")
-        draw.rounded_rectangle((32, 278, 608, 300), radius=11, fill="#26334b")
+        draw.text((32, 316), screen.items[3], font=self.item_font, fill="#f6f8ff")
+        draw.rounded_rectangle((32, 350, 608, 370), radius=10, fill="#26334b")
         progress_width = int(576 * player.progress)
         if progress_width:
-            draw.rounded_rectangle((32, 278, 32 + progress_width, 300), radius=11, fill="#36c2b4")
-        draw.text((32, 326), screen.items[4], font=self.small_font, fill="#c6d0df")
+            draw.rounded_rectangle((32, 350, 32 + progress_width, 370), radius=10, fill="#36c2b4")
+        draw.text((32, 384), screen.items[4], font=self.small_font, fill="#c6d0df")
         if player.error_code:
-            draw.rounded_rectangle((24, 374, 616, 422), radius=6, fill="#4a2525")
-            draw.text((38, 389), f"Playback error: {player.error_code}", font=self.small_font, fill="#ffb0a8")
+            error = self._ellipsize(draw, f"Playback error: {player.error_code}", self.small_font, 562)
+            draw.rounded_rectangle((24, 406, 616, 438), radius=6, fill="#4a2525")
+            draw.text((38, 413), error, font=self.small_font, fill="#ffb0a8")
         draw.rectangle((0, 444, WIDTH, HEIGHT), fill="#111b30")
         draw.text((320, 462), screen.footer, font=self.small_font, fill="#9eb0c9", anchor="mm")
         return image
+
+    def _draw_player_artwork(
+        self,
+        destination: Image.Image,
+        draw: ImageDraw.ImageDraw,
+        artwork_path: Path | None,
+    ) -> None:
+        left, top, right, bottom = PLAYER_ARTWORK_BOX
+        cover = self._load_artwork(artwork_path)
+        if cover is None:
+            draw.rounded_rectangle((left, top, right - 1, bottom - 1), radius=18, fill="#6f35d5", outline="#36c2b4", width=3)
+            draw.ellipse((72, 161, 160, 249), outline="#d8b8ff", width=5)
+            draw.rounded_rectangle((103, 174, 129, 222), radius=13, fill="#f6f8ff")
+            draw.arc((91, 188, 141, 239), 0, 180, fill="#36c2b4", width=5)
+            draw.line((116, 237, 116, 253), fill="#f6f8ff", width=5)
+            draw.line((99, 253, 133, 253), fill="#f6f8ff", width=5)
+            draw.text((116, 277), "ANBERPOD", font=self.small_font, fill="#ffffff", anchor="mm")
+            return
+        mask = Image.new("L", (right - left, bottom - top), 0)
+        ImageDraw.Draw(mask).rounded_rectangle((0, 0, mask.width - 1, mask.height - 1), radius=18, fill=255)
+        destination.paste(cover, (left, top), mask)
+
+    def _load_artwork(self, path: Path | None) -> Image.Image | None:
+        if path is None or self.artwork_root is None:
+            return None
+        try:
+            candidate = path.expanduser().resolve(strict=True)
+            if candidate == self.artwork_root or self.artwork_root not in candidate.parents:
+                return None
+            with Image.open(candidate) as source:
+                if source.format not in {"PNG", "JPEG", "WEBP"}:
+                    return None
+                width, height = source.size
+                if width < 1 or height < 1 or width > 8192 or height > 8192 or width * height > 16_000_000:
+                    return None
+                source.load()
+                converted = source.convert("RGB")
+            return ImageOps.fit(converted, (168, 168), method=_LANCZOS)
+        except (OSError, SyntaxError, ValueError, Image.DecompressionBombError):
+            return None
+
+    @staticmethod
+    def _ellipsize(draw, text, font, max_width):  # type: ignore[no-untyped-def]
+        clean = " ".join(text.split()) or "Untitled"
+        if draw.textbbox((0, 0), clean, font=font)[2] <= max_width:
+            return clean
+        while clean and draw.textbbox((0, 0), clean + "...", font=font)[2] > max_width:
+            clean = clean[:-1]
+        return clean.rstrip() + "..."
+
+    @classmethod
+    def _wrap_lines(cls, draw, text, font, max_width, max_lines):  # type: ignore[no-untyped-def]
+        words = (" ".join(text.split()) or "Untitled").split(" ")
+        lines: list[str] = []
+        current = ""
+        for word_index, word in enumerate(words):
+            candidate = f"{current} {word}".strip()
+            if not current or draw.textbbox((0, 0), candidate, font=font)[2] <= max_width:
+                current = candidate
+                continue
+            lines.append(current)
+            current = word
+            if len(lines) == max_lines - 1:
+                remainder = " ".join((current, *words[word_index + 1:]))
+                lines.append(cls._ellipsize(draw, remainder, font, max_width))
+                return tuple(lines)
+        if current:
+            lines.append(cls._ellipsize(draw, current, font, max_width))
+        return tuple(lines[:max_lines])
 
     def save_player(self, player: PlayerViewModel, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

@@ -6,7 +6,7 @@ from pathlib import Path
 from anberpod.app import Application
 from anberpod.config import DataPaths
 from anberpod.domain.models import DiscoveryResult, InputAction, InputEvent, PlaybackState, Podcast
-from anberpod.fixtures import seed_demo_library
+from anberpod.fixtures import DEMO_COVER_URL, seed_demo_library
 from anberpod.services.import_preview import ImportPreview, ImportStatus
 from anberpod.ui.renderer import Renderer
 from anberpod.ui.state import PlayerViewModel, Route
@@ -30,8 +30,8 @@ def main() -> int:
     paths = DataPaths.create(args.data_dir) if args.data_dir else DataPaths.from_environment()
     app = Application.open(paths, OfflineProbe())
     if args.demo:
-        seed_demo_library(app.repositories)
-    renderer = Renderer()
+        seed_demo_library(app.repositories, paths)
+    renderer = Renderer(artwork_root=paths.cache / "artwork")
     if args.render_dir:
         routes = (Route.HOME, Route.SUBSCRIPTIONS, Route.DOWNLOADS, Route.SETTINGS)
         for route in routes:
@@ -46,9 +46,10 @@ def main() -> int:
         renderer.save(app.screen(), args.render_dir / "search.png")
         app.show_search_results("science", DiscoveryResult((demo_result,), cached=True))
         renderer.save(app.screen(), args.render_dir / "search_results.png")
+        cover_path = app.artwork_cache.ensure_cached(DEMO_COVER_URL, online=False)
         renderer.save_player(PlayerViewModel(
             "demo-ep-1", "How Stars Begin", "Saved Science", PlaybackState.PAUSED,
-            185_000, 1_800_000, local=True,
+            185_000, 1_800_000, local=True, artwork_path=cover_path,
         ), args.render_dir / "player.png")
         subscribed = app.repositories.podcasts.list_subscribed()
         if subscribed:

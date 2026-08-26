@@ -108,3 +108,18 @@ def test_http_policy_limits_decompressed_body_and_rejects_unknown_encoding() -> 
             RequestPolicy(max_bytes=50), "https://example.test/feed", {}
         )
     assert caught.value.code == "unsupported_encoding"
+
+
+def test_http_policy_enforces_total_deadline_across_stream_chunks() -> None:
+    ticks = iter((10.0, 10.1, 12.1))
+    adapter = FakeAdapter([AdapterResponse(200, {}, [b"first", b"second"])])
+    transport = PolicyHttpTransport(adapter, public_resolver, monotonic=lambda: next(ticks))
+
+    with pytest.raises(HttpPolicyError) as caught:
+        transport.request(
+            RequestPolicy(total_timeout_seconds=2.0, max_bytes=100),
+            "https://example.test/cover.png",
+            {},
+        )
+
+    assert caught.value.code == "total_timeout"

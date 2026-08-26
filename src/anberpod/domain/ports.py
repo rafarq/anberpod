@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Iterable, Mapping, Protocol, runtime_checkable
 
 from .models import (
@@ -38,6 +39,10 @@ class PodcastCatalog(Protocol):
 
 class HttpTransport(Protocol):
     def request(self, policy: RequestPolicy, url: str, headers: Mapping[str, str]) -> HttpResponse: ...
+
+
+class ArtworkCachePort(Protocol):
+    def ensure_cached(self, url: str | None, *, online: bool) -> Path | None: ...
 
 
 class FeedReader(Protocol):
