@@ -62,6 +62,7 @@ fi
 export ANBERPOD_DATA_DIR="$DATA_DIR"
 export ANBERPOD_FFMPEG=${ANBERPOD_FFMPEG:-"$ENGINE"}
 export ANBERPOD_APLAY=${ANBERPOD_APLAY:-aplay}
+export ANBERPOD_CA_BUNDLE=${ANBERPOD_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}
 export PYTHONPATH="$APP_ROOT/current/src:$APP_ROOT/current/vendor"
 export PYSDL2_DLL_PATH=/usr/lib
 

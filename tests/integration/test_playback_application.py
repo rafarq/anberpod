@@ -3,6 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
+from anberpod.adapters.ffmpeg_aplay import FfmpegAplayEngine
 from anberpod.app import Application
 from anberpod.config import DataPaths
 from anberpod.domain.models import Episode, InputAction, InputEvent, PlaybackEvent, PlaybackSource, PlaybackState, Podcast
@@ -155,3 +158,22 @@ def test_play_episode_resolves_podcast_cover_before_render_and_prefers_offline_c
 
     assert artwork.calls == [("https://images.example.test/show.png?signature=private", False)]
     assert app._player is not None and app._player.artwork_path == cached_cover
+
+
+def test_application_open_defaults_ca_bundle(tmp_path: Path) -> None:
+    paths = DataPaths.create(tmp_path / "data")
+    app = Application.open(paths, Offline())
+    assert isinstance(app.playback.engine, FfmpegAplayEngine)
+    assert app.playback.engine.config.ca_bundle_path == Path("/etc/ssl/certs/ca-certificates.crt")
+
+
+def test_application_open_wires_ca_bundle_from_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    custom_ca = tmp_path / "custom_ca.crt"
+    monkeypatch.setenv("ANBERPOD_CA_BUNDLE", str(custom_ca))
+    paths = DataPaths.create(tmp_path / "data")
+    app = Application.open(paths, Offline())
+    assert isinstance(app.playback.engine, FfmpegAplayEngine)
+    assert app.playback.engine.config.ca_bundle_path == custom_ca.resolve()
+

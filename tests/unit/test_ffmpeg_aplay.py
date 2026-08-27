@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from anberpod.adapters.ffmpeg_aplay import (
+    DEFAULT_CA_BUNDLE,
     FfmpegAplayConfig,
     FfmpegAplayEngine,
     SubprocessProcessFactory,
@@ -60,12 +61,22 @@ class FakeFactory:
         return process
 
 
-def config(tmp_path: Path) -> FfmpegAplayConfig:
+def config(tmp_path: Path, *, ca_bundle: Path | str | None = ...) -> FfmpegAplayConfig:
     decoder = tmp_path / "runtime" / "bin" / "ffmpeg"
     decoder.parent.mkdir(parents=True, exist_ok=True)
     decoder.write_bytes(b"synthetic-test-placeholder")
     decoder.chmod(0o755)
-    return FfmpegAplayConfig(decoder_path=decoder, aplay_path="/usr/bin/aplay", stop_timeout_seconds=0.25)
+    if ca_bundle is ...:
+        ca_file = tmp_path / "ca-certificates.crt"
+        if not ca_file.exists():
+            ca_file.write_text("synthetic-ca-bundle", encoding="utf-8")
+        ca_bundle = ca_file
+    return FfmpegAplayConfig(
+        decoder_path=decoder,
+        aplay_path="/usr/bin/aplay",
+        stop_timeout_seconds=0.25,
+        ca_bundle_path=ca_bundle,
+    )
 
 
 def test_engine_launches_static_decoder_and_pipes_s16le_pcm_to_aplay(tmp_path: Path) -> None:
@@ -91,6 +102,11 @@ def test_engine_launches_static_decoder_and_pipes_s16le_pcm_to_aplay(tmp_path: P
         ffmpeg_args[ffmpeg_args.index("-user_agent")],
         ffmpeg_args[ffmpeg_args.index("-user_agent") + 1],
     )
+    assert ("-tls_ca_file", str(engine.config.ca_bundle_path)) == (
+        ffmpeg_args[ffmpeg_args.index("-tls_ca_file")],
+        ffmpeg_args[ffmpeg_args.index("-tls_ca_file") + 1],
+    )
+    assert not any("tls_verify" in arg for arg in ffmpeg_args)
     assert aplay_args == (
         "/usr/bin/aplay", "--quiet", "--format=S16_LE", "--rate=48000", "--channels=2"
     )
@@ -110,6 +126,7 @@ def test_local_playback_uses_absolute_file_and_seek_restarts_clean_pipeline(tmp_
     assert factory.starts[2][0][factory.starts[2][0].index("-i") + 1] == str(media)
     assert "https" not in factory.starts[2][0][factory.starts[2][0].index("-protocol_whitelist") + 1]
     assert "-user_agent" not in factory.starts[2][0]
+    assert "-tls_ca_file" not in factory.starts[2][0]
     assert old_decoder.calls[0] == ("terminate",)
     assert old_aplay.calls[0] == ("terminate",)
     assert ("kill",) in old_decoder.calls and ("kill",) in old_aplay.calls
@@ -197,3 +214,86 @@ def test_subprocess_factory_never_uses_shell_and_drains_stderr_safely(monkeypatc
     assert calls[0][1]["shell"] is False
     assert calls[0][1]["close_fds"] is True
     assert len(process.stderr_text.encode("utf-8")) <= 128
+
+
+def test_default_ca_bundle_path_is_etc_ssl_certs_ca_certificates_crt() -> None:
+    assert DEFAULT_CA_BUNDLE == Path("/etc/ssl/certs/ca-certificates.crt")
+    conf = FfmpegAplayConfig(decoder_path=Path("/usr/bin/ffmpeg"))
+    assert conf.ca_bundle_path == Path("/etc/ssl/certs/ca-certificates.crt")
+
+
+def test_remote_playback_supplies_custom_ca_bundle_when_readable(tmp_path: Path) -> None:
+    custom_ca = tmp_path / "custom_ca.pem"
+    custom_ca.write_text("custom certificate bundle", encoding="utf-8")
+    factory = FakeFactory()
+    engine = FfmpegAplayEngine(config(tmp_path, ca_bundle=custom_ca), factory)
+
+    engine.play(PlaybackSource("https://cdn.example.test/stream.mp3", local=False), 0)
+
+    ffmpeg_args = factory.starts[0][0]
+    assert "-tls_ca_file" in ffmpeg_args
+    assert ffmpeg_args[ffmpeg_args.index("-tls_ca_file") + 1] == str(custom_ca)
+    assert not any("tls_verify" in arg for arg in ffmpeg_args)
+
+
+def test_remote_playback_omits_tls_ca_file_when_ca_bundle_missing(tmp_path: Path) -> None:
+    missing_ca = tmp_path / "nonexistent" / "ca.crt"
+    factory = FakeFactory()
+    engine = FfmpegAplayEngine(config(tmp_path, ca_bundle=missing_ca), factory)
+
+    engine.play(PlaybackSource("https://cdn.example.test/stream.mp3", local=False), 0)
+
+    ffmpeg_args = factory.starts[0][0]
+    assert "-tls_ca_file" not in ffmpeg_args
+    assert not any("tls_verify" in arg for arg in ffmpeg_args)
+
+
+def test_remote_playback_omits_tls_ca_file_when_ca_bundle_unreadable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    unreadable_ca = tmp_path / "unreadable_ca.crt"
+    unreadable_ca.write_text("ca content", encoding="utf-8")
+    factory = FakeFactory()
+    engine = FfmpegAplayEngine(config(tmp_path, ca_bundle=unreadable_ca), factory)
+
+    import os
+    orig_access = os.access
+
+    def fake_access(path: object, mode: int, *args: object, **kwargs: object) -> bool:
+        if str(path) == str(unreadable_ca) and mode == os.R_OK:
+            return False
+        return orig_access(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr("os.access", fake_access)
+
+    engine.play(PlaybackSource("https://cdn.example.test/stream.mp3", local=False), 0)
+
+    ffmpeg_args = factory.starts[0][0]
+    assert "-tls_ca_file" not in ffmpeg_args
+    assert not any("tls_verify" in arg for arg in ffmpeg_args)
+
+
+def test_remote_playback_omits_tls_ca_file_when_ca_bundle_is_none(tmp_path: Path) -> None:
+    factory = FakeFactory()
+    engine = FfmpegAplayEngine(config(tmp_path, ca_bundle=None), factory)
+
+    engine.play(PlaybackSource("https://cdn.example.test/stream.mp3", local=False), 0)
+
+    ffmpeg_args = factory.starts[0][0]
+    assert "-tls_ca_file" not in ffmpeg_args
+    assert not any("tls_verify" in arg for arg in ffmpeg_args)
+
+
+def test_local_playback_never_supplies_tls_ca_file_even_with_readable_ca(tmp_path: Path) -> None:
+    ca = tmp_path / "ca.crt"
+    ca.write_text("ca bundle", encoding="utf-8")
+    local_file = tmp_path / "media.mp3"
+    local_file.write_bytes(b"audio data")
+    factory = FakeFactory()
+    engine = FfmpegAplayEngine(config(tmp_path, ca_bundle=ca), factory)
+
+    engine.play(PlaybackSource(str(local_file), local=True), 0)
+
+    ffmpeg_args = factory.starts[0][0]
+    assert "-tls_ca_file" not in ffmpeg_args
+

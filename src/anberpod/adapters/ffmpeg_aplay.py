@@ -124,6 +124,9 @@ class SubprocessProcessFactory:
         return ManagedSubprocess(process, self.stderr_limit_bytes)
 
 
+DEFAULT_CA_BUNDLE = Path("/etc/ssl/certs/ca-certificates.crt")
+
+
 @dataclass(frozen=True)
 class FfmpegAplayConfig:
     decoder_path: Path
@@ -134,6 +137,7 @@ class FfmpegAplayConfig:
     stop_timeout_seconds: float = 2.0
     stderr_limit_bytes: int = 16 * 1024
     user_agent: str = f"AnberPod/{__version__}"
+    ca_bundle_path: Path | str | None = DEFAULT_CA_BUNDLE
 
 
 class FfmpegAplayEngine:
@@ -210,6 +214,13 @@ class FfmpegAplayEngine:
                 "-reconnect_streamed", "1",
                 "-reconnect_delay_max", "5",
             ])
+            if self.config.ca_bundle_path is not None:
+                try:
+                    ca_path = Path(self.config.ca_bundle_path)
+                    if ca_path.is_file() and os.access(ca_path, os.R_OK):
+                        args.extend(["-tls_ca_file", str(ca_path)])
+                except OSError:
+                    pass
         args.extend([
             "-ss", f"{start_seconds:.3f}",
             "-i", source.value,

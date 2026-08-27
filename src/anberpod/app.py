@@ -138,9 +138,16 @@ class Application:
                 "ANBERPOD_FFMPEG",
                 str(paths.root.parent / "runtime" / "bin" / "ffmpeg"),
             )).expanduser().resolve()
+            ca_bundle_env = os.environ.get("ANBERPOD_CA_BUNDLE")
+            ca_bundle_path = (
+                Path(ca_bundle_env).expanduser().resolve()
+                if ca_bundle_env
+                else Path("/etc/ssl/certs/ca-certificates.crt")
+            )
             playback_engine = FfmpegAplayEngine(FfmpegAplayConfig(
                 decoder_path=decoder_path,
                 aplay_path=os.environ.get("ANBERPOD_APLAY", "aplay"),
+                ca_bundle_path=ca_bundle_path,
             ))
         playback = PlaybackController(
             repositories.playback,
