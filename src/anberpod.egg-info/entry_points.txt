@@ -1,2 +1,0 @@
-[console_scripts]
-anberpod = anberpod.__main__:main
