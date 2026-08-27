@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from anberpod.adapters.itunes import ITunesCatalogClient
 from anberpod.app import Application
 from anberpod.config import DataPaths
 from anberpod.domain.models import DiscoveryResult, InputAction, InputEvent, Podcast
@@ -85,17 +86,16 @@ def test_search_route_exposes_keyboard_and_pending_submission(tmp_path: Path) ->
     assert app.pending_search_query is None
 
 
-def test_missing_catalog_credentials_leaves_local_features_available(tmp_path: Path) -> None:
+def test_missing_podcast_index_credentials_falls_back_to_itunes_by_default(tmp_path: Path) -> None:
+    """Regression: without a configured Podcast Index key, Explore/Search
+    must still work via the keyless iTunes Search API default, not show a
+    permanent 'configure credentials' dead end."""
     app = Application.open(DataPaths.create(tmp_path / "data"), Online())
     saved = Podcast("saved", "https://feeds.example.test/saved.xml", "Saved locally")
     app.repositories.podcasts.save(saved)
 
-    app.refresh_categories()
+    assert isinstance(app.discovery.catalog, ITunesCatalogClient)
 
-    explore = app.screen()
-    assert explore.route is Route.EXPLORE
-    assert explore.items == ()
-    assert explore.status == "Configure Podcast Index in data/config/config.toml"
     preserved = app.repositories.podcasts.get("saved")
     assert preserved is not None
     assert (preserved.title, preserved.feed_url) == (saved.title, saved.feed_url)
@@ -146,3 +146,22 @@ def test_submitting_search_query_autoloads_results(tmp_path: Path) -> None:
     assert screen.route is Route.SEARCH_RESULTS
     assert "Found Show" in screen.items[0]
     assert app.pending_search_query is None
+
+
+def test_selecting_a_category_in_explore_searches_by_that_category(tmp_path: Path) -> None:
+    """Regression: pressing A on a category in Explore did nothing at all --
+    there was no handler wired for Route.EXPLORE + ACCEPT."""
+    discovery = FakeDiscovery()
+    app = Application.open(DataPaths.create(tmp_path / "data"), Online(), discovery=discovery)
+
+    app.handle(InputEvent(InputAction.ACCEPT))  # Home -> Explore, autoloads categories
+    assert app.screen().items == ("Arts", "Technology")
+
+    app.handle(InputEvent(InputAction.RIGHT))  # move focus onto "Technology"
+    app.state.focus = 1
+    app.handle(InputEvent(InputAction.ACCEPT))  # select the category
+
+    assert discovery.search_called_with == "Technology"
+    screen = app.screen()
+    assert screen.route is Route.SEARCH_RESULTS
+    assert "Found Show" in screen.items[0]

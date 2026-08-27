@@ -8,7 +8,10 @@ no on-device keyboard required.
 
 ## Features
 
-- **Discover** — browse Podcast Index categories or search by keyword.
+- **Discover** — browse podcast categories or search by keyword. Works out
+  of the box using the free, keyless iTunes Search API; if you configure a
+  [Podcast Index](https://api.podcastindex.org/signup) API key, that richer
+  catalog is used instead.
 - **Direct RSS** — import any public RSS/Atom feed as an additional source.
 - **Subscriptions** — subscribe/unsubscribe locally, refresh episode lists on demand.
 - **Streaming playback** — HTTPS audio decoded by a bundled static ARM64
@@ -44,8 +47,9 @@ no on-device keyboard required.
   (see [Required ffmpeg placement](#required-arm64-ffmpeg-placement) below —
   this repository does not redistribute one).
 - Optional: a free [Podcast Index](https://api.podcastindex.org/signup) API
-  key/secret to enable the Explore/Search catalog. Without it, direct RSS
-  import, your local library, downloads, and playback still work fully.
+  key/secret to switch discovery from the built-in iTunes Search API to
+  Podcast Index's richer catalog. Neither is required to get started —
+  Explore and Search work with zero configuration via iTunes.
 
 ## Installing on the device
 

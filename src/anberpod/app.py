@@ -10,6 +10,7 @@ from anberpod import __version__
 from anberpod.adapters.filesystem import AtomicFiles
 from anberpod.adapters.ffmpeg_aplay import FfmpegAplayConfig, FfmpegAplayEngine
 from anberpod.adapters.http import PolicyHttpTransport, UrllibHttpAdapter
+from anberpod.adapters.itunes import ITunesCatalogClient
 from anberpod.adapters.podcast_index import LocalCatalogCredentials, PodcastIndexClient
 from anberpod.adapters.sqlite import Repositories
 from anberpod.config import DataPaths
@@ -23,7 +24,7 @@ from anberpod.domain.models import (
     PlaybackState,
     Podcast,
 )
-from anberpod.domain.ports import ArtworkCachePort, Clock, ConnectivityProbe, MonotonicClock, PlaybackEngine
+from anberpod.domain.ports import ArtworkCachePort, Clock, ConnectivityProbe, MonotonicClock, PlaybackEngine, PodcastCatalog
 from anberpod.i18n import DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES, normalize_language, resolve_system_language, t as translate
 from anberpod.services.artwork import ArtworkCache
 from anberpod.adapters.rss import DirectFeedReader
@@ -112,11 +113,18 @@ class Application:
         })
         if discovery is None:
             clock = SystemClock()
-            catalog = PodcastIndexClient(
-                PolicyHttpTransport(UrllibHttpAdapter()),
-                LocalCatalogCredentials(paths.config / "config.toml"),
-                clock,
-            )
+            transport = PolicyHttpTransport(UrllibHttpAdapter())
+            # Podcast Index gives richer metadata/categories, but requires a
+            # free API key/secret the user must register for themselves.
+            # The iTunes Search API needs no registration at all, so it is
+            # the zero-configuration default: a fresh install can discover
+            # podcasts immediately. Podcast Index is used instead only once
+            # the user has actually configured credentials.
+            index_credentials = LocalCatalogCredentials(paths.config / "config.toml")
+            if index_credentials.podcast_index() is not None:
+                catalog: PodcastCatalog = PodcastIndexClient(transport, index_credentials, clock)
+            else:
+                catalog = ITunesCatalogClient(transport)
             discovery = DiscoveryService(
                 catalog,
                 CatalogCache(paths, repositories.database.connection, AtomicFiles(paths.root)),
@@ -186,6 +194,11 @@ class Application:
             submitted = self.keyboard.take_submission()
             if submitted is not None:
                 self.search_catalog(submitted)
+            return
+        if self.state.route is Route.EXPLORE and event.action is InputAction.ACCEPT and not event.repeated:
+            if self._categories is not None and self._categories.items:
+                category = self._categories.items[self.state.focus]
+                self.search_catalog(category)
             return
         if self.state.route is Route.SEARCH_RESULTS and event.action is InputAction.ACCEPT and not event.repeated:
             if self._search_results and self._search_results.items:
