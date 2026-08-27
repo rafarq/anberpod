@@ -218,7 +218,7 @@ class FfmpegAplayEngine:
                 try:
                     ca_path = Path(self.config.ca_bundle_path)
                     if ca_path.is_file() and os.access(ca_path, os.R_OK):
-                        args.extend(["-tls_ca_file", str(ca_path)])
+                        args.extend(["-ca_file", str(ca_path)])
                 except OSError:
                     pass
         args.extend([

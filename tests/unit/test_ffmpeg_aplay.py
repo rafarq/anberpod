@@ -102,9 +102,9 @@ def test_engine_launches_static_decoder_and_pipes_s16le_pcm_to_aplay(tmp_path: P
         ffmpeg_args[ffmpeg_args.index("-user_agent")],
         ffmpeg_args[ffmpeg_args.index("-user_agent") + 1],
     )
-    assert ("-tls_ca_file", str(engine.config.ca_bundle_path)) == (
-        ffmpeg_args[ffmpeg_args.index("-tls_ca_file")],
-        ffmpeg_args[ffmpeg_args.index("-tls_ca_file") + 1],
+    assert ("-ca_file", str(engine.config.ca_bundle_path)) == (
+        ffmpeg_args[ffmpeg_args.index("-ca_file")],
+        ffmpeg_args[ffmpeg_args.index("-ca_file") + 1],
     )
     assert not any("tls_verify" in arg for arg in ffmpeg_args)
     assert aplay_args == (
@@ -126,7 +126,7 @@ def test_local_playback_uses_absolute_file_and_seek_restarts_clean_pipeline(tmp_
     assert factory.starts[2][0][factory.starts[2][0].index("-i") + 1] == str(media)
     assert "https" not in factory.starts[2][0][factory.starts[2][0].index("-protocol_whitelist") + 1]
     assert "-user_agent" not in factory.starts[2][0]
-    assert "-tls_ca_file" not in factory.starts[2][0]
+    assert "-ca_file" not in factory.starts[2][0]
     assert old_decoder.calls[0] == ("terminate",)
     assert old_aplay.calls[0] == ("terminate",)
     assert ("kill",) in old_decoder.calls and ("kill",) in old_aplay.calls
@@ -231,12 +231,12 @@ def test_remote_playback_supplies_custom_ca_bundle_when_readable(tmp_path: Path)
     engine.play(PlaybackSource("https://cdn.example.test/stream.mp3", local=False), 0)
 
     ffmpeg_args = factory.starts[0][0]
-    assert "-tls_ca_file" in ffmpeg_args
-    assert ffmpeg_args[ffmpeg_args.index("-tls_ca_file") + 1] == str(custom_ca)
+    assert "-ca_file" in ffmpeg_args
+    assert ffmpeg_args[ffmpeg_args.index("-ca_file") + 1] == str(custom_ca)
     assert not any("tls_verify" in arg for arg in ffmpeg_args)
 
 
-def test_remote_playback_omits_tls_ca_file_when_ca_bundle_missing(tmp_path: Path) -> None:
+def test_remote_playback_omits_ca_file_when_ca_bundle_missing(tmp_path: Path) -> None:
     missing_ca = tmp_path / "nonexistent" / "ca.crt"
     factory = FakeFactory()
     engine = FfmpegAplayEngine(config(tmp_path, ca_bundle=missing_ca), factory)
@@ -244,11 +244,11 @@ def test_remote_playback_omits_tls_ca_file_when_ca_bundle_missing(tmp_path: Path
     engine.play(PlaybackSource("https://cdn.example.test/stream.mp3", local=False), 0)
 
     ffmpeg_args = factory.starts[0][0]
-    assert "-tls_ca_file" not in ffmpeg_args
+    assert "-ca_file" not in ffmpeg_args
     assert not any("tls_verify" in arg for arg in ffmpeg_args)
 
 
-def test_remote_playback_omits_tls_ca_file_when_ca_bundle_unreadable(
+def test_remote_playback_omits_ca_file_when_ca_bundle_unreadable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     unreadable_ca = tmp_path / "unreadable_ca.crt"
@@ -269,22 +269,22 @@ def test_remote_playback_omits_tls_ca_file_when_ca_bundle_unreadable(
     engine.play(PlaybackSource("https://cdn.example.test/stream.mp3", local=False), 0)
 
     ffmpeg_args = factory.starts[0][0]
-    assert "-tls_ca_file" not in ffmpeg_args
+    assert "-ca_file" not in ffmpeg_args
     assert not any("tls_verify" in arg for arg in ffmpeg_args)
 
 
-def test_remote_playback_omits_tls_ca_file_when_ca_bundle_is_none(tmp_path: Path) -> None:
+def test_remote_playback_omits_ca_file_when_ca_bundle_is_none(tmp_path: Path) -> None:
     factory = FakeFactory()
     engine = FfmpegAplayEngine(config(tmp_path, ca_bundle=None), factory)
 
     engine.play(PlaybackSource("https://cdn.example.test/stream.mp3", local=False), 0)
 
     ffmpeg_args = factory.starts[0][0]
-    assert "-tls_ca_file" not in ffmpeg_args
+    assert "-ca_file" not in ffmpeg_args
     assert not any("tls_verify" in arg for arg in ffmpeg_args)
 
 
-def test_local_playback_never_supplies_tls_ca_file_even_with_readable_ca(tmp_path: Path) -> None:
+def test_local_playback_never_supplies_ca_file_even_with_readable_ca(tmp_path: Path) -> None:
     ca = tmp_path / "ca.crt"
     ca.write_text("ca bundle", encoding="utf-8")
     local_file = tmp_path / "media.mp3"
@@ -295,5 +295,6 @@ def test_local_playback_never_supplies_tls_ca_file_even_with_readable_ca(tmp_pat
     engine.play(PlaybackSource(str(local_file), local=True), 0)
 
     ffmpeg_args = factory.starts[0][0]
-    assert "-tls_ca_file" not in ffmpeg_args
+    assert "-ca_file" not in ffmpeg_args
+
 
