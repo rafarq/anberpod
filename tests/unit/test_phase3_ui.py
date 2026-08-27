@@ -165,3 +165,39 @@ def test_selecting_a_category_in_explore_searches_by_that_category(tmp_path: Pat
     screen = app.screen()
     assert screen.route is Route.SEARCH_RESULTS
     assert "Found Show" in screen.items[0]
+
+
+def test_selecting_a_subscription_opens_its_episode_list(tmp_path: Path) -> None:
+    """Regression: pressing A on a podcast in Subscriptions did nothing --
+    there was no handler wired for Route.SUBSCRIPTIONS + ACCEPT, so
+    subscribed episodes were never reachable from that screen."""
+    from datetime import datetime, timezone
+
+    from anberpod.domain.models import Episode
+
+    app = Application.open(DataPaths.create(tmp_path / "data"), Online())
+    now = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    app.repositories.podcasts.save(Podcast(
+        "pod-a", "https://feeds.example.test/a.xml", "Podcast A", created_at=now, updated_at=now,
+    ))
+    app.repositories.podcasts.save(Podcast(
+        "pod-b", "https://feeds.example.test/b.xml", "Podcast B", created_at=now, updated_at=now,
+    ))
+    app.repositories.podcasts.subscribe("pod-a", now)
+    app.repositories.podcasts.subscribe("pod-b", now)
+    app.repositories.episodes.upsert(Episode(
+        "ep-b1", "pod-b", "guid:b1", "https://cdn.example.test/b1.mp3", "B Episode One",
+        created_at=now, updated_at=now,
+    ))
+
+    app.state.show(Route.SUBSCRIPTIONS, 2)
+    listing = app.screen()
+    assert listing.items == ("Podcast A", "Podcast B")
+
+    app.state.focus = 1  # "Podcast B"
+    app.handle(InputEvent(InputAction.ACCEPT))
+
+    detail = app.screen()
+    assert detail.route is Route.PODCAST
+    assert detail.title == "Podcast B"
+    assert "B Episode One" in detail.items

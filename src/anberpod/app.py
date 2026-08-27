@@ -200,6 +200,11 @@ class Application:
                 category = self._categories.items[self.state.focus]
                 self.search_catalog(category)
             return
+        if self.state.route is Route.SUBSCRIPTIONS and event.action is InputAction.ACCEPT and not event.repeated:
+            subscribed = self.repositories.podcasts.list_subscribed()
+            if subscribed and self.state.focus < len(subscribed):
+                self.show_podcast(subscribed[self.state.focus].id)
+            return
         if self.state.route is Route.SEARCH_RESULTS and event.action is InputAction.ACCEPT and not event.repeated:
             if self._search_results and self._search_results.items:
                 self._open_catalog_podcast(self._search_results.items[self.state.focus])
