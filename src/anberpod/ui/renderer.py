@@ -86,16 +86,17 @@ class Renderer:
         self.small_font = _font(13)
         self.artwork_root = artwork_root.expanduser().resolve() if artwork_root is not None else None
 
-    def render(self, screen: ScreenModel, t: Translator = _default_translator) -> Image.Image:
+    def render(self, screen: ScreenModel, t: Translator = _default_translator, *, offline: bool = False) -> Image.Image:
         if screen.route is Route.HOME:
-            return self._render_home(screen, t)
+            return self._render_home(screen, t, offline=offline)
 
         image = Image.new("RGB", (WIDTH, HEIGHT), "#0a1020")
         draw = ImageDraw.Draw(image)
         draw.rectangle((0, 0, WIDTH, 60), fill="#16233f")
         draw.rectangle((0, 60, 8, HEIGHT), fill="#36c2b4")
         draw.text((22, 14), "ANBERPOD", font=self.title_font, fill="#f6f8ff")
-        draw.text((614, 18), t("offline_banner"), font=self.small_font, fill="#8ca0bd", anchor="ra")
+        if offline:
+            draw.text((614, 18), t("offline_banner"), font=self.small_font, fill="#8ca0bd", anchor="ra")
         draw.text((22, 76), screen.title, font=self.title_font, fill="#78e0d4")
 
         dense = len(screen.items) > 6
@@ -122,13 +123,14 @@ class Renderer:
         draw.text((320, 462), screen.footer, font=self.small_font, fill="#9eb0c9", anchor="mm")
         return image
 
-    def _render_home(self, screen: ScreenModel, t: Translator = _default_translator) -> Image.Image:
+    def _render_home(self, screen: ScreenModel, t: Translator = _default_translator, *, offline: bool = False) -> Image.Image:
         image = Image.new("RGB", (WIDTH, HEIGHT), "#0a1020")
         draw = ImageDraw.Draw(image)
         draw.rectangle((0, 0, WIDTH, 60), fill="#16233f")
         draw.rectangle((0, 60, 8, HEIGHT), fill="#36c2b4")
         draw.text((22, 14), "ANBERPOD", font=self.title_font, fill="#f6f8ff")
-        draw.text((614, 18), t("offline_banner"), font=self.small_font, fill="#8ca0bd", anchor="ra")
+        if offline:
+            draw.text((614, 18), t("offline_banner"), font=self.small_font, fill="#8ca0bd", anchor="ra")
         draw.text((22, 70), screen.title, font=self.item_font, fill="#78e0d4")
 
         for index, (route, box) in enumerate(zip(HOME_ROUTES, HOME_CARD_BOXES)):
@@ -187,9 +189,9 @@ class Renderer:
             fill="#ffffff",
         )
 
-    def save(self, screen: ScreenModel, path: Path, t: Translator = _default_translator) -> None:
+    def save(self, screen: ScreenModel, path: Path, t: Translator = _default_translator, *, offline: bool = False) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        self.render(screen, t).save(path, format="PNG", optimize=False, compress_level=9)
+        self.render(screen, t, offline=offline).save(path, format="PNG", optimize=False, compress_level=9)
 
     def render_player(self, player: PlayerViewModel, t: Translator = _default_translator) -> Image.Image:
         image = Image.new("RGB", (WIDTH, HEIGHT), "#0a1020")

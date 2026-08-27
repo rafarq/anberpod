@@ -99,3 +99,50 @@ def test_missing_catalog_credentials_leaves_local_features_available(tmp_path: P
     preserved = app.repositories.podcasts.get("saved")
     assert preserved is not None
     assert (preserved.title, preserved.feed_url) == (saved.title, saved.feed_url)
+
+
+class FakeDiscovery:
+    def __init__(self) -> None:
+        self.categories_called = False
+        self.search_called_with: str | None = None
+
+    def categories(self) -> DiscoveryResult:
+        self.categories_called = True
+        return DiscoveryResult(("Arts", "Technology"), cached=False)
+
+    def search(self, query: str, limit: int) -> DiscoveryResult:
+        self.search_called_with = query
+        return DiscoveryResult((Podcast("catalog:1", "https://feeds.example.test/found.xml", "Found Show"),), cached=False)
+
+
+def test_opening_explore_from_home_autoloads_categories(tmp_path: Path) -> None:
+    """Regression: entering Explore must trigger a real catalog fetch, not just switch screens."""
+    discovery = FakeDiscovery()
+    app = Application.open(DataPaths.create(tmp_path / "data"), Online(), discovery=discovery)
+
+    app.handle(InputEvent(InputAction.ACCEPT))  # Home focus 0 == Explore
+
+    assert discovery.categories_called is True
+    screen = app.screen()
+    assert screen.route is Route.EXPLORE
+    assert screen.items == ("Arts", "Technology")
+
+
+def test_submitting_search_query_autoloads_results(tmp_path: Path) -> None:
+    """Regression: submitting the on-screen keyboard must trigger a real search, not just stash the query."""
+    discovery = FakeDiscovery()
+    app = Application.open(DataPaths.create(tmp_path / "data"), Online(), discovery=discovery)
+    app.state.show(Route.SEARCH)
+
+    press(app.keyboard, InputAction.ACCEPT)  # 'a'
+    for _ in range(6):
+        press(app.keyboard, InputAction.DOWN)
+    for _ in range(2):
+        press(app.keyboard, InputAction.RIGHT)
+    app.handle(InputEvent(InputAction.ACCEPT))  # 'search' key -> submit
+
+    assert discovery.search_called_with == "a"
+    screen = app.screen()
+    assert screen.route is Route.SEARCH_RESULTS
+    assert "Found Show" in screen.items[0]
+    assert app.pending_search_query is None

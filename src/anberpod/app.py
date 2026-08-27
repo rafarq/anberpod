@@ -177,7 +177,7 @@ class Application:
             self.keyboard.handle(event)
             submitted = self.keyboard.take_submission()
             if submitted is not None:
-                self.pending_search_query = submitted
+                self.search_catalog(submitted)
             return
         if self.state.route is Route.SEARCH_RESULTS and event.action is InputAction.ACCEPT and not event.repeated:
             if self._search_results and self._search_results.items:
@@ -208,6 +208,14 @@ class Application:
                 self.state.focus = 1
                 self.state.set_item_count(4)
                 return
+        if self.state.route is Route.HOME and event.action is InputAction.ACCEPT and not event.repeated:
+            from anberpod.ui.state import HOME_ROUTES
+
+            target = HOME_ROUTES[self.state.focus] if self.state.focus < len(HOME_ROUTES) else None
+            self.state.handle(event)
+            if target is Route.EXPLORE:
+                self.refresh_categories()
+            return
         self.state.set_item_count(len(self.screen().items))
         self.state.handle(event)
         if self.state.exit_requested and not self._shutdown_logged:

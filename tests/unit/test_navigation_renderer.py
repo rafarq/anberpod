@@ -9,6 +9,26 @@ from anberpod.ui.renderer import Renderer
 from anberpod.ui.state import AppState, Route, ScreenModel
 
 
+def _pixel_present(image: Image.Image, color: tuple[int, int, int], box) -> bool:
+    """Whether ``color`` appears anywhere inside ``box`` (used to detect a rendered banner)."""
+    cropped = image.crop(box).convert("RGB")
+    return any(pixel == color for pixel in cropped.getdata())
+
+
+def test_offline_banner_only_renders_when_actually_offline() -> None:
+    renderer = Renderer()
+    screen = ScreenModel(Route.SUBSCRIPTIONS, "Subscriptions", (), footer="footer")
+
+    online_frame = renderer.render(screen, offline=False)
+    offline_frame = renderer.render(screen, offline=True)
+
+    # The banner draws #8ca0bd text in the top-right corner strip; it must
+    # only appear when the app is actually offline, not unconditionally.
+    top_right_box = (500, 0, 640, 40)
+    assert _pixel_present(online_frame, (140, 160, 189), top_right_box) is False
+    assert _pixel_present(offline_frame, (140, 160, 189), top_right_box) is True
+
+
 def test_navigation_focus_back_and_menu_work_without_keyboard() -> None:
     state = AppState()
     assert state.route is Route.HOME

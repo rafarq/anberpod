@@ -79,7 +79,7 @@ def test_podcast_index_signature_matches_fixed_vector() -> None:
     assert url == "https://api.podcastindex.org/api/1.0/search/byterm?q=science+%26+nature&max=10"
     assert headers == {
         "Authorization": "7feabaa5d319877d105ab76b8576ac2b8f09b32a",
-        "User-Agent": "AnberPod/0.1.1",
+        "User-Agent": "AnberPod/0.1.2",
         "X-Auth-Date": "1787660645",
         "X-Auth-Key": "test-key",
     }
