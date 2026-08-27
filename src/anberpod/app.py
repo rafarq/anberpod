@@ -1,22 +1,31 @@
 from __future__ import annotations
 
 import os
+import shutil
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
 from anberpod import __version__
+from anberpod.adapters.ffmpeg_aplay import FfmpegAplayConfig, FfmpegAplayEngine, FfmpegMediaProbe
 from anberpod.adapters.filesystem import AtomicFiles
-from anberpod.adapters.ffmpeg_aplay import FfmpegAplayConfig, FfmpegAplayEngine
 from anberpod.adapters.http import PolicyHttpTransport, UrllibHttpAdapter
 from anberpod.adapters.itunes import ITunesCatalogClient
 from anberpod.adapters.podcast_index import LocalCatalogCredentials, PodcastIndexClient
+from anberpod.adapters.rss import DirectFeedReader
 from anberpod.adapters.sqlite import Repositories
 from anberpod.config import DataPaths
-from anberpod.domain.errors import AnberPodError, CatalogError, HttpPolicyError, MissingCatalogCredentialsError
+from anberpod.domain.errors import (
+    AnberPodError,
+    CatalogError,
+    DownloadError,
+    HttpPolicyError,
+    MissingCatalogCredentialsError,
+)
 from anberpod.domain.models import (
     DiscoveryResult,
+    Download,
     DownloadState,
     Episode,
     InputAction,
@@ -26,24 +35,32 @@ from anberpod.domain.models import (
 )
 from anberpod.domain.ports import ArtworkCachePort, Clock, ConnectivityProbe, MonotonicClock, PlaybackEngine, PodcastCatalog
 from anberpod.i18n import DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES, normalize_language, resolve_system_language, t as translate
-from anberpod.services.artwork import ArtworkCache
-from anberpod.adapters.rss import DirectFeedReader
 from anberpod.logging import configure_logging
-from anberpod.services.startup import recover_local_state
+from anberpod.services.artwork import ArtworkCache
 from anberpod.services.discovery import CatalogCache, DiscoveryService
+from anberpod.services.downloads import (
+    BoundedHttpsDownloadTransport,
+    DownloadService,
+    DownloadTransport,
+    MediaProbe,
+    delete_download,
+)
 from anberpod.services.feeds import FeedService, UpdateStatus
 from anberpod.services.import_preview import ImportPreview, ImportStatus
 from anberpod.services.playback import PlaybackController, PlaybackSourceSelector
+from anberpod.services.startup import recover_local_state
 from anberpod.ui.state import (
     LANGUAGE_CODES,
     AppState,
     DownloadItemViewModel,
     DownloadsViewModel,
     PlayerViewModel,
+    PodcastView,
     Route,
     ScreenModel,
     SettingsView,
     VirtualKeyboard,
+    _display_bytes,
 )
 
 
@@ -58,9 +75,13 @@ class Application:
     playback: PlaybackController
     artwork_cache: ArtworkCachePort
     feeds: FeedService
+    downloads: DownloadService
     language: str = DEFAULT_LANGUAGE
     _shutdown_logged: bool = False
     _selected_podcast_id: str | None = None
+    _selected_episode_id: str | None = None
+    _podcast_episode_focus: int = 0
+    _download_error_code: str | None = None
     _import_results: tuple[ImportPreview, ...] = ()
     _categories: DiscoveryResult[str] | None = None
     _search_results: DiscoveryResult[Podcast] | None = None
@@ -101,6 +122,9 @@ class Application:
         playback_monotonic: MonotonicClock | None = None,
         playback_clock: Clock | None = None,
         artwork_cache: ArtworkCachePort | None = None,
+        downloads: DownloadService | None = None,
+        download_transport: DownloadTransport | None = None,
+        download_probe: MediaProbe | None = None,
     ) -> "Application":
         logger = configure_logging(paths.logs / "anberpod.log")
         repositories = Repositories.open(paths.database)
@@ -133,11 +157,11 @@ class Application:
             )
         playback_clock = playback_clock or SystemClock()
         playback_monotonic = playback_monotonic or SystemMonotonicClock()
+        decoder_path = Path(os.environ.get(
+            "ANBERPOD_FFMPEG",
+            str(paths.root.parent / "runtime" / "bin" / "ffmpeg"),
+        )).expanduser().resolve()
         if playback_engine is None:
-            decoder_path = Path(os.environ.get(
-                "ANBERPOD_FFMPEG",
-                str(paths.root.parent / "runtime" / "bin" / "ffmpeg"),
-            )).expanduser().resolve()
             ca_bundle_env = os.environ.get("ANBERPOD_CA_BUNDLE")
             ca_bundle_path = (
                 Path(ca_bundle_env).expanduser().resolve()
@@ -165,11 +189,23 @@ class Application:
             repositories,
             SystemClock(),
         )
+        if downloads is None:
+            d_transport = download_transport or BoundedHttpsDownloadTransport(PolicyHttpTransport(UrllibHttpAdapter()))
+            d_probe = download_probe or FfmpegMediaProbe(decoder_path)
+            downloads = DownloadService(
+                repositories.downloads,
+                repositories.episodes,
+                AtomicFiles(paths.root),
+                d_transport,
+                d_probe,
+                playback_clock or SystemClock(),
+                free_bytes=lambda: shutil.disk_usage(paths.root).free if paths.root.exists() else 1024 * 1024 * 1024 * 10,
+            )
         # A valid persisted language always wins over system detection, per
         # the language-resolution rule mirrored from radio.app.state.
         language = normalize_language(repositories.settings.get("language")) or resolve_system_language()
         return cls(
-            paths, repositories, connectivity, AppState(), logger, discovery, playback, artwork_cache, feeds,
+            paths, repositories, connectivity, AppState(), logger, discovery, playback, artwork_cache, feeds, downloads,
             language=language,
         )
 
@@ -216,27 +252,82 @@ class Application:
             if self._search_results and self._search_results.items:
                 self._open_catalog_podcast(self._search_results.items[self.state.focus])
             return
-        if self.state.route is Route.PODCAST and event.action is InputAction.ACCEPT and not event.repeated:
-            podcast_id = self._selected_podcast_id or ""
-            if self.state.focus == 0 and self.repositories.podcasts.get(podcast_id) is not None:
-                self.update_podcast(podcast_id)
-            elif self.state.focus == 1 and self.repositories.podcasts.get(podcast_id) is not None:
-                if self.repositories.podcasts.is_subscribed(podcast_id):
-                    self.repositories.podcasts.unsubscribe(podcast_id)
-                else:
-                    self.repositories.podcasts.subscribe(podcast_id, datetime.now(timezone.utc))
-                    # A catalog subscription only carries Podcast Index
-                    # metadata, not episodes; fetch the real RSS feed right
-                    # away so episodes are immediately available to play or
-                    # download instead of requiring a separate manual
-                    # "Update now" the user has no reason to expect.
-                    self.update_podcast(podcast_id)
-            elif self.state.focus >= 2:
-                episodes = self.repositories.episodes.list_for_podcast(podcast_id)
-                episode_index = self.state.focus - 2
-                if episode_index < len(episodes):
-                    self.play_episode(episodes[episode_index])
+        if self.state.route is Route.DOWNLOADS and event.action is InputAction.ACCEPT and not event.repeated:
+            rows = self.repositories.database.connection.execute(
+                """SELECT episode.id, episode.title, download.state, download.bytes_received,
+                download.bytes_total, download.error_code FROM download
+                JOIN episode ON episode.id=download.episode_id ORDER BY download.created_at, episode.id"""
+            ).fetchall()
+            if rows and self.state.focus < len(rows):
+                episode_id = rows[self.state.focus][0]
+                state = DownloadState(rows[self.state.focus][2])
+                episode = self.repositories.episodes.get(episode_id)
+                if episode is not None:
+                    if state is DownloadState.COMPLETE:
+                        self.play_episode(episode)
+                        return
+                    elif state in (DownloadState.FAILED, DownloadState.QUEUED):
+                        self.download_episode(episode)
+                        return
             return
+        if self.state.route is Route.PODCAST:
+            podcast_id = self._selected_podcast_id or ""
+            podcast = self.repositories.podcasts.get(podcast_id)
+            if self.state.podcast_view is PodcastView.EPISODE_ACTIONS:
+                if event.action is InputAction.BACK and not event.repeated:
+                    self.state.podcast_view = PodcastView.EPISODES
+                    self.state.focus = self._podcast_episode_focus
+                    episodes = self.repositories.episodes.list_for_podcast(podcast_id)
+                    self.state.set_item_count(2 + len(episodes))
+                    return
+                if event.action is InputAction.ACCEPT and not event.repeated:
+                    episode = self.repositories.episodes.get(self._selected_episode_id or "")
+                    if episode is not None:
+                        download = self.repositories.downloads.get(episode.id)
+                        is_complete = download is not None and download.state is DownloadState.COMPLETE
+                        if self.state.focus == 0:
+                            self.play_episode(episode)
+                            return
+                        elif self.state.focus == 1:
+                            if is_complete:
+                                self.delete_download(episode.id)
+                            else:
+                                self.download_episode(episode)
+                            self.state.set_item_count(2)
+                            return
+                    return
+            else:  # PodcastView.EPISODES
+                if event.action is InputAction.ACCEPT and not event.repeated:
+                    if self.state.focus == 0 and podcast is not None:
+                        self.update_podcast(podcast_id)
+                        episodes = self.repositories.episodes.list_for_podcast(podcast_id)
+                        self.state.set_item_count(2 + len(episodes))
+                        return
+                    elif self.state.focus == 1 and podcast is not None:
+                        if self.repositories.podcasts.is_subscribed(podcast_id):
+                            self.repositories.podcasts.unsubscribe(podcast_id)
+                        else:
+                            self.repositories.podcasts.subscribe(podcast_id, datetime.now(timezone.utc))
+                            # A catalog subscription only carries Podcast Index
+                            # metadata, not episodes; fetch the real RSS feed right
+                            # away so episodes are immediately available to play or
+                            # download instead of requiring a separate manual
+                            # "Update now" the user has no reason to expect.
+                            self.update_podcast(podcast_id)
+                        episodes = self.repositories.episodes.list_for_podcast(podcast_id)
+                        self.state.set_item_count(2 + len(episodes))
+                        return
+                    elif self.state.focus >= 2:
+                        episodes = self.repositories.episodes.list_for_podcast(podcast_id)
+                        episode_index = self.state.focus - 2
+                        if episode_index < len(episodes):
+                            self._selected_episode_id = episodes[episode_index].id
+                            self._podcast_episode_focus = self.state.focus
+                            self.state._podcast_focus = self.state.focus
+                            self.state.podcast_view = PodcastView.EPISODE_ACTIONS
+                            self.state.focus = 0
+                            self.state.set_item_count(2)
+                        return
         if self.state.route is Route.SETTINGS and event.action is InputAction.ACCEPT and not event.repeated:
             if self.state.settings_view is SettingsView.MENU and self.state.focus == 1:
                 self.state.settings_view = SettingsView.LANGUAGE
@@ -267,7 +358,49 @@ class Application:
         if self.repositories.podcasts.get(podcast_id) is None:
             raise KeyError(podcast_id)
         self._selected_podcast_id = podcast_id
-        self.state.show(Route.PODCAST)
+        self._selected_episode_id = None
+        self._download_error_code = None
+        self.state.podcast_view = PodcastView.EPISODES
+        episodes = self.repositories.episodes.list_for_podcast(podcast_id)
+        self.state.show(Route.PODCAST, 2 + len(episodes))
+
+    def download_episode(self, episode: Episode | str) -> Download | None:
+        if isinstance(episode, str):
+            ep = self.repositories.episodes.get(episode)
+        else:
+            ep = episode
+        if ep is None:
+            self._download_error_code = "episode_missing"
+            return None
+        try:
+            self._download_error_code = None
+            self.downloads.queue(ep)
+            return self.downloads.run(ep.id)
+        except DownloadError as exc:
+            self._download_error_code = exc.code
+            return None
+        except (HttpPolicyError, OSError, TimeoutError, ValueError) as exc:
+            self._download_error_code = getattr(exc, "code", "download_failed")
+            return None
+
+    def delete_download(self, episode_id: str) -> None:
+        in_use_predicate = lambda ep_id: bool(
+            self.playback.source
+            and self.playback.source.local
+            and self._player
+            and self._player.episode_id == ep_id
+            and self.playback.state in (PlaybackState.BUFFERING, PlaybackState.PLAYING, PlaybackState.PAUSED)
+        )
+        try:
+            self._download_error_code = None
+            delete_download(
+                episode_id,
+                self.repositories.downloads,
+                AtomicFiles(self.paths.root),
+                in_use=in_use_predicate,
+            )
+        except DownloadError as exc:
+            self._download_error_code = exc.code
 
     def show_import_results(self, results: list[ImportPreview]) -> None:
         self._import_results = tuple(results)
@@ -408,6 +541,34 @@ class Application:
             if podcast is None:
                 items = ()
                 title = self.t("podcast_title_fallback")
+            elif self.state.podcast_view is PodcastView.EPISODE_ACTIONS and selected is self.state.route:
+                episode = self.repositories.episodes.get(self._selected_episode_id or "")
+                if episode is None:
+                    items = ()
+                    title = podcast.title
+                else:
+                    title = episode.title
+                    download = self.repositories.downloads.get(episode.id)
+                    is_complete = download is not None and download.state is DownloadState.COMPLETE
+                    download_action = (
+                        self.t("episode_action_delete_download")
+                        if is_complete
+                        else self.t("episode_action_download")
+                    )
+                    items = (self.t("episode_action_play"), download_action)
+                    if download is not None:
+                        if download.state is DownloadState.COMPLETE:
+                            status = self.t("download_status_complete", size=_display_bytes(download.bytes_received))
+                        elif download.state is DownloadState.FAILED:
+                            status = self.t("download_status_failed", code=download.error_code or "failed")
+                        elif download.state is DownloadState.DOWNLOADING:
+                            status = self.t("download_status_downloading")
+                        elif download.state is DownloadState.QUEUED:
+                            status = self.t("download_status_queued")
+                    elif self._download_error_code:
+                        status = self.t("download_status_failed", code=self._download_error_code)
+                focus = self.state.focus
+                return ScreenModel(selected, title, items, focus=focus, status=status, footer=self.t("footer_default"))
             else:
                 action = (
                     self.t("podcast_action_unsubscribe")
@@ -417,6 +578,8 @@ class Application:
                 episodes = self.repositories.episodes.list_for_podcast(podcast.id)
                 items = (self.t("podcast_update_now"), action, *(episode.title for episode in episodes))
                 title = podcast.title
+                if self._download_error_code:
+                    status = self.t("download_status_failed", code=self._download_error_code)
         elif selected is Route.RSS_IMPORT:
             items = tuple(
                 f"{item.status.value}  {item.podcast.title if item.podcast else item.error_code or item.url}"

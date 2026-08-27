@@ -118,8 +118,13 @@ def test_podcast_episode_row_opens_player_with_a(tmp_path: Path) -> None:
     app.show_podcast("pod")
     app.state.focus = 2
 
+    # A on episode row opens episode action screen (Play / Download)
     app.handle(InputEvent(InputAction.ACCEPT))
+    assert app.screen().items == ("Play", "Download")
+    assert app.state.focus == 0
 
+    # A on "Play" opens Player
+    app.handle(InputEvent(InputAction.ACCEPT))
     assert app.state.route is Route.PLAYER
     assert app.screen().items[0] == episode.title
     assert engine.calls[0][0] == "play"

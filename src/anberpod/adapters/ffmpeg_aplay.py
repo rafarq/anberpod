@@ -328,3 +328,39 @@ class FfmpegAplayEngine:
                     pass
         self._decoder = None
         self._aplay = None
+
+
+class FfmpegMediaProbe:
+    """Validates container/media using bundled ffmpeg without fully decoding."""
+
+    def __init__(self, decoder_path: Path) -> None:
+        self.decoder_path = decoder_path
+
+    def validate(self, path: Path) -> bool:
+        if not path.is_file() or path.stat().st_size == 0:
+            return False
+        if not self.decoder_path.is_file() or not os.access(self.decoder_path, os.X_OK):
+            return True
+        try:
+            result = subprocess.run(
+                [
+                    str(self.decoder_path),
+                    "-nostdin",
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-i",
+                    str(path),
+                    "-t",
+                    "0.5",
+                    "-f",
+                    "null",
+                    "-",
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                timeout=10,
+            )
+            return result.returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            return False

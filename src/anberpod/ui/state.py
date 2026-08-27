@@ -55,6 +55,16 @@ class SettingsView(str, Enum):
     LANGUAGE = "language"
 
 
+class PodcastView(str, Enum):
+    """Sub-view within :attr:`Route.PODCAST`.
+
+    Episodes list -> Episode actions (Play / Download / Delete) -> back to Episodes list.
+    """
+
+    EPISODES = "episodes"
+    EPISODE_ACTIONS = "episode_actions"
+
+
 @dataclass(frozen=True)
 class ScreenModel:
     route: Route
@@ -245,6 +255,8 @@ class AppState:
         self._home_focus = 0
         self._item_count = len(HOME_ROUTES)
         self.settings_view: SettingsView = SettingsView.MENU
+        self.podcast_view: PodcastView = PodcastView.EPISODES
+        self._podcast_focus = 0
 
     def set_item_count(self, count: int) -> None:
         self._item_count = max(0, count)
@@ -261,14 +273,19 @@ class AppState:
                 # Language picker back to the Settings menu, without popping
                 # the outer back stack (Settings is still one screen).
                 self.settings_view = SettingsView.MENU
-                self.focus = 0
-                self._item_count = 3
+                self.focus = 1
+                self._item_count = 4
+                return
+            if self.route is Route.PODCAST and self.podcast_view is not PodcastView.EPISODES:
+                self.podcast_view = PodcastView.EPISODES
+                self.focus = self._podcast_focus
                 return
             if self.route is not Route.HOME:
                 self.route = Route.HOME
                 self.focus = self._home_focus
                 self._item_count = len(HOME_ROUTES)
                 self.settings_view = SettingsView.MENU
+                self.podcast_view = PodcastView.EPISODES
             return
         if self.route is Route.SETTINGS and self.settings_view is SettingsView.LANGUAGE:
             if event.action is InputAction.DOWN:
@@ -296,6 +313,8 @@ class AppState:
                 self._item_count = 0
                 if self.route is Route.SETTINGS:
                     self.settings_view = SettingsView.MENU
+                if self.route is Route.PODCAST:
+                    self.podcast_view = PodcastView.EPISODES
         else:
             if event.action is InputAction.DOWN and self._item_count:
                 self.focus = min(self.focus + 1, self._item_count - 1)
@@ -308,3 +327,5 @@ class AppState:
         self._item_count = max(0, item_count)
         if route is Route.SETTINGS:
             self.settings_view = SettingsView.MENU
+        if route is Route.PODCAST:
+            self.podcast_view = PodcastView.EPISODES
