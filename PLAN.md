@@ -1,27 +1,27 @@
-# Plan de MVP: AnberPod para RG35XX H / MuOS
+# MVP Plan: AnberPod for RG35XX H / MuOS
 
-## 1. Objetivo, límites y definición de terminado
+## 1. Goal, boundaries, and definition of done
 
-Construir por fases una aplicación nativa de podcasts que se ejecute desde `Roms/APPS` en una Anbernic RG35XX H con MuOS, con interfaz PySDL2 a 640×480, control exclusivo por botones físicos y estado durable en la tarjeta SD. El MVP permite explorar y buscar en Podcast Index, importar RSS públicos, suscribirse localmente, actualizar bajo demanda, reproducir por HTTPS, reanudar, descargar y reproducir sin red.
+Build, in phases, a native podcast application that runs from `Roms/APPS` on an Anbernic RG35XX H with MuOS, with a PySDL2 interface at 640×480, exclusive control via physical buttons, and durable state on the SD card. The MVP allows browsing and searching Podcast Index, importing public RSS feeds, subscribing locally, updating on demand, playing over HTTPS, resuming, downloading, and playing without a network connection.
 
-El MVP termina únicamente cuando pasan las pruebas automatizadas de host y la lista de validación en hardware de la sección 13. Cada fase debe dejar un incremento ejecutable y verificable; ninguna fase posterior debe ser necesaria para probar la anterior.
+The MVP is only considered done once the automated host tests and the hardware validation checklist in section 13 both pass. Each phase must leave behind a runnable, verifiable increment; no later phase should be required to test an earlier one.
 
-Queda expresamente fuera del MVP: cuentas, sincronización, analítica o telemetría, recomendaciones personalizadas, feeds privados o autenticados, descargas automáticas, eliminación automática, colas, velocidad variable, teclado en la consola y cualquier reproductor multimedia aportado por el firmware. El repositorio y los artefactos publicados no contendrán credenciales, feeds privados ni episodios descargados.
+Explicitly out of scope for the MVP: accounts, synchronization, analytics or telemetry, personalized recommendations, private or authenticated feeds, automatic downloads, automatic deletion, queues, variable playback speed, an on-console keyboard, and any media player bundled with the firmware. The repository and published artifacts will not contain credentials, private feeds, or downloaded episodes.
 
-## 2. Decisiones de alcance y arquitectura
+## 2. Scope and architecture decisions
 
-- Un solo proceso Python 3.10 presenta la interfaz y coordina servicios. El trabajo bloqueante de red, descarga, lectura de feed y control de procesos corre fuera del hilo SDL y entrega eventos a una cola acotada.
-- SQLite es la fuente de verdad local para catálogo visto, suscripciones, episodios, progreso y estado de descargas. Los archivos grandes viven fuera de SQLite. La base usa claves foráneas, transacciones, WAL y migraciones crecientes.
-- El directorio de datos es independiente del código versionado. El lanzador pasa una ruta absoluta `ANBERPOD_DATA_DIR`; actualizar una versión nunca copia, limpia ni reemplaza ese directorio.
-- Podcast Index sirve exclusivamente para categorías, búsqueda y metadatos de descubrimiento. Una suscripción conserva la URL canónica del feed y se actualiza leyendo RSS bajo demanda, de modo que sigue siendo útil sin el catálogo.
-- El audio remoto y local se decodifica con un `ffmpeg` ARM64 estático, de ruta configurable, a PCM firmado little-endian de 16 bits, 48 kHz y dos canales. El PCM se entrega a ALSA mediante `aplay`; no se invoca mpv, VLC ni otro reproductor del firmware.
-- La reproducción local tiene prioridad si existe una descarga marcada `complete` cuyo tamaño y archivo coinciden. En otro caso se usa la URL HTTPS remota. No se reproduce un archivo `.part`.
-- La primera versión soporta RSS 2.0 y Atom públicos, con namespaces habituales de podcast (iTunes y Podcast Namespace) sólo en los campos que necesita el producto. HTML, OPML y feeds autenticados quedan fuera.
-- Se muestra siempre el estado local válido primero. La falta de red produce un aviso no modal y no impide entrar en Suscripciones, Descargas, Ajustes o reproducir archivos completos.
+- A single Python 3.10 process renders the interface and coordinates services. Blocking work for networking, downloading, feed parsing, and process control runs outside the SDL thread and delivers events to a bounded queue.
+- SQLite is the local source of truth for the seen catalog, subscriptions, episodes, progress, and download state. Large files live outside SQLite. The database uses foreign keys, transactions, WAL, and incremental migrations.
+- The data directory is independent of the versioned code. The launcher passes an absolute `ANBERPOD_DATA_DIR` path; upgrading a version never copies, clears, or replaces that directory.
+- Podcast Index is used exclusively for categories, search, and discovery metadata. A subscription retains the canonical feed URL and is refreshed by reading RSS on demand, so it remains useful without the catalog.
+- Remote and local audio is decoded with a static ARM64 `ffmpeg` binary at a configurable path, into signed little-endian 16-bit PCM at 48 kHz, two channels. The PCM is delivered to ALSA via `aplay`; mpv, VLC, or any other firmware player is never invoked.
+- Local playback takes priority when a download marked `complete` exists and its size and file match. Otherwise the remote HTTPS URL is used. A `.part` file is never played.
+- The first version supports public RSS 2.0 and Atom, with common podcast namespaces (iTunes and the Podcast Namespace) only in the fields the product needs. HTML, OPML, and authenticated feeds are out of scope.
+- Valid local state is always shown first. Lack of network connectivity produces a non-modal notice and does not prevent entering Subscriptions, Downloads, Settings, or playing already-complete files.
 
-## 3. Disposición prevista del repositorio
+## 3. Planned repository layout
 
-La implementación futura seguirá esta estructura; este documento no crea todavía ninguno de estos módulos:
+The future implementation will follow this structure; this document does not yet create any of these modules:
 
 ```text
 anberpod/
@@ -29,31 +29,31 @@ anberpod/
 ├── requirements.lock
 ├── requirements-dev.lock
 ├── src/anberpod/
-│   ├── __main__.py                 # composición y arranque
-│   ├── app.py                      # bucle de aplicación y coordinación
+│   ├── __main__.py                 # composition and startup
+│   ├── app.py                      # application loop and coordination
 │   ├── domain/
-│   │   ├── models.py               # entidades y enums sin SDL/red/SQLite
-│   │   ├── ports.py                # Protocols mockables
-│   │   └── errors.py               # errores tipados para UI/log
+│   │   ├── models.py               # entities and enums, no SDL/network/SQLite
+│   │   ├── ports.py                # mockable Protocols
+│   │   └── errors.py               # typed errors for UI/logging
 │   ├── services/
-│   │   ├── discovery.py            # casos de uso Podcast Index
-│   │   ├── feeds.py                # importar/actualizar/suscribir
-│   │   ├── downloads.py            # máquina de estados de descarga
-│   │   └── playback.py             # selección local/remota y progreso
+│   │   ├── discovery.py            # Podcast Index use cases
+│   │   ├── feeds.py                # import/refresh/subscribe
+│   │   ├── downloads.py            # download state machine
+│   │   └── playback.py             # local/remote selection and progress
 │   ├── adapters/
 │   │   ├── podcast_index.py
-│   │   ├── http.py                 # transporte HTTPS y política común
-│   │   ├── rss.py                  # parseo XML limitado
-│   │   ├── sqlite.py               # repositorios y migraciones
-│   │   ├── filesystem.py           # escritura, fsync y reemplazo atómico
+│   │   ├── http.py                 # HTTPS transport and shared policy
+│   │   ├── rss.py                  # restricted XML parsing
+│   │   ├── sqlite.py               # repositories and migrations
+│   │   ├── filesystem.py           # writes, fsync, and atomic replace
 │   │   ├── ffmpeg_aplay.py
 │   │   └── sdl_input.py
 │   ├── ui/
-│   │   ├── state.py                # rutas, foco y view-models
-│   │   ├── screens.py              # pantallas 640×480
-│   │   ├── widgets.py              # listas, diálogo y teclado virtual
+│   │   ├── state.py                # routes, focus, and view-models
+│   │   ├── screens.py              # 640×480 screens
+│   │   ├── widgets.py              # lists, dialogs, and virtual keyboard
 │   │   ├── renderer.py             # PySDL2/Pillow
-│   │   └── assets/                 # fuentes e imágenes redistribuibles
+│   │   └── assets/                 # redistributable fonts and images
 │   └── migrations/
 │       ├── 001_initial.sql
 │       └── ...
@@ -61,8 +61,8 @@ anberpod/
 │   ├── unit/
 │   ├── integration/
 │   ├── contract/
-│   ├── fixtures/                   # RSS/XML/audio mínimos, todos públicos/sintéticos
-│   └── hardware/                   # guion/manual y recolector de diagnóstico
+│   ├── fixtures/                   # minimal RSS/XML/audio, all public/synthetic
+│   └── hardware/                   # script/manual and diagnostics collector
 ├── packaging/muos/
 │   ├── AnberPod.sh
 │   ├── README-INSTALL.txt
@@ -76,37 +76,37 @@ anberpod/
     └── HARDWARE-VALIDATION.md
 ```
 
-`requirements.lock` fijará versiones compatibles con Python 3.10, incluidas PySDL2, Pillow y un parser XML endurecido; no se aceptarán dependencias que requieran compilar en la consola. Las pruebas del dominio no importarán SDL, abrirán red ni ejecutarán audio real.
+`requirements.lock` will pin versions compatible with Python 3.10, including PySDL2, Pillow, and a hardened XML parser; no dependency requiring compilation on the console will be accepted. Domain tests will not import SDL, open network connections, or play real audio.
 
-## 4. Contratos mockables
+## 4. Mockable contracts
 
-Los puertos se expresarán como `typing.Protocol` y usarán modelos del dominio, no objetos de bibliotecas externas:
+Ports will be expressed as `typing.Protocol` and will use domain models, not objects from external libraries:
 
-- `Clock.now_utc() -> datetime` y `MonotonicClock.seconds() -> float`: fechas, expiración de caché y progreso deterministas.
-- `PodcastCatalog.categories()`, `search(query, limit)` y `podcast(feed_id)`: catálogo desacoplado de Podcast Index.
-- `HttpTransport.request(RequestPolicy, url, headers) -> HttpResponse`: única frontera HTTP; admite un transporte falso con secuencias de respuestas y redirecciones.
-- `FeedReader.fetch(url, validators) -> FeedFetchResult` y `parse(bytes, source_url) -> ParsedFeed`: validación HTTP separada del parseo XML.
-- `PodcastRepository`, `EpisodeRepository`, `PlaybackRepository`, `DownloadRepository` y `SettingsRepository`: operaciones transaccionales con dobles en memoria.
-- `AtomicFiles.commit_temp(temp, destination)`, `exists`, `size`, `unlink`: sistema de archivos sustituible; `unlink` sólo recibe rutas ya resueltas dentro del directorio de datos.
-- `DownloadRunner.start(job)`, `cancel(id)` y `events()`: descarga por bloques y eventos de avance sin acoplar la UI a hilos.
-- `PlaybackEngine.play(source, start_seconds)`, `pause`, `resume`, `seek_relative`, `stop`, `events()` y `shutdown`: proceso ffmpeg/aplay sustituible por un motor determinista.
-- `InputSource.poll() -> list[InputEvent]`: SDL aislado de la navegación.
-- `ConnectivityProbe.is_online()`: pista para UI; nunca reemplaza el manejo del error real.
-- `CredentialProvider.podcast_index()`: lee secretos sólo de configuración local y permite un falso en tests.
-- `Logger`: registra mensajes estructurados sin secretos, query strings sensibles ni cabeceras.
+- `Clock.now_utc() -> datetime` and `MonotonicClock.seconds() -> float`: deterministic timestamps, cache expiration, and progress tracking.
+- `PodcastCatalog.categories()`, `search(query, limit)`, and `podcast(feed_id)`: catalog decoupled from Podcast Index.
+- `HttpTransport.request(RequestPolicy, url, headers) -> HttpResponse`: the single HTTP boundary; supports a fake transport with scripted response sequences and redirects.
+- `FeedReader.fetch(url, validators) -> FeedFetchResult` and `parse(bytes, source_url) -> ParsedFeed`: HTTP validation kept separate from XML parsing.
+- `PodcastRepository`, `EpisodeRepository`, `PlaybackRepository`, `DownloadRepository`, and `SettingsRepository`: transactional operations with in-memory doubles.
+- `AtomicFiles.commit_temp(temp, destination)`, `exists`, `size`, `unlink`: a swappable filesystem abstraction; `unlink` only ever receives paths already resolved within the data directory.
+- `DownloadRunner.start(job)`, `cancel(id)`, and `events()`: chunked downloading and progress events without coupling the UI to threads.
+- `PlaybackEngine.play(source, start_seconds)`, `pause`, `resume`, `seek_relative`, `stop`, `events()`, and `shutdown`: the ffmpeg/aplay process, swappable for a deterministic engine.
+- `InputSource.poll() -> list[InputEvent]`: SDL isolated from navigation.
+- `ConnectivityProbe.is_online()`: a UI hint; never a substitute for real error handling.
+- `CredentialProvider.podcast_index()`: reads secrets only from local configuration and allows a fake in tests.
+- `Logger`: logs structured messages without secrets, sensitive query strings, or headers.
 
-Los casos de uso recibirán estos puertos por constructor. Los tests de contrato ejecutarán la misma batería contra repositorios SQLite y sus dobles para evitar que el mock tenga semántica distinta.
+Use cases will receive these ports through their constructors. Contract tests will run the same battery of tests against both SQLite repositories and their doubles, to prevent the mock from having different semantics.
 
-## 5. Datos locales, esquema y durabilidad
+## 5. Local data, schema, and durability
 
-Ruta estable propuesta en la SD:
+Proposed stable path on the SD card:
 
 ```text
 Roms/APPS/AnberPod/
-├── current -> releases/<versión>/       # o copia seleccionada por el instalador
-├── releases/<versión>/                  # código reemplazable
-├── runtime/bin/ffmpeg                    # ARM64 estático, reemplazable
-└── data/                                 # nunca incluido ni borrado por una actualización
+├── current -> releases/<version>/       # or a copy selected by the installer
+├── releases/<version>/                  # replaceable code
+├── runtime/bin/ffmpeg                    # static ARM64, replaceable
+└── data/                                 # never included in nor deleted by an update
     ├── db/anberpod.sqlite3
     ├── downloads/<episode_uuid>.<ext>
     ├── cache/images/
@@ -117,173 +117,173 @@ Roms/APPS/AnberPod/
     └── logs/anberpod.log
 ```
 
-Si MuOS o el sistema de archivos de la SD no soporta enlaces simbólicos, `current/` será un directorio reemplazable; el lanzador seguirá resolviendo `data/` como hermano, nunca como hijo. El instalador crea datos ausentes, pero aborta antes de tocar datos existentes. Los logs rotan localmente con un máximo documentado (por defecto, 3 archivos de 1 MiB).
+If MuOS or the SD card's filesystem does not support symbolic links, `current/` will be a replaceable directory; the launcher will still resolve `data/` as a sibling, never as a child. The installer creates missing data but aborts before touching existing data. Logs rotate locally with a documented maximum (by default, 3 files of 1 MiB each).
 
-Esquema inicial exacto, con tiempos UTC en texto RFC 3339 y duraciones/posiciones como milisegundos enteros:
+Exact initial schema, with UTC timestamps as RFC 3339 text and durations/positions as integer milliseconds:
 
-| Tabla | Columnas y restricciones relevantes |
+| Table | Relevant columns and constraints |
 |---|---|
 | `schema_migration` | `version INTEGER PRIMARY KEY`, `applied_at TEXT NOT NULL` |
-| `podcast` | `id TEXT PRIMARY KEY` (UUID local), `feed_url TEXT NOT NULL UNIQUE`, `catalog_id INTEGER NULL`, `title TEXT NOT NULL`, `author TEXT`, `description TEXT`, `image_url TEXT`, `language TEXT`, `etag TEXT`, `last_modified TEXT`, `last_checked_at TEXT`, `last_success_at TEXT`, `created_at TEXT NOT NULL`, `updated_at TEXT NOT NULL` |
+| `podcast` | `id TEXT PRIMARY KEY` (local UUID), `feed_url TEXT NOT NULL UNIQUE`, `catalog_id INTEGER NULL`, `title TEXT NOT NULL`, `author TEXT`, `description TEXT`, `image_url TEXT`, `language TEXT`, `etag TEXT`, `last_modified TEXT`, `last_checked_at TEXT`, `last_success_at TEXT`, `created_at TEXT NOT NULL`, `updated_at TEXT NOT NULL` |
 | `subscription` | `podcast_id TEXT PRIMARY KEY REFERENCES podcast(id) ON DELETE CASCADE`, `subscribed_at TEXT NOT NULL` |
-| `episode` | `id TEXT PRIMARY KEY` (UUID local estable), `podcast_id TEXT NOT NULL REFERENCES podcast(id) ON DELETE CASCADE`, `source_key TEXT NOT NULL`, `guid TEXT`, `media_url TEXT NOT NULL`, `title TEXT NOT NULL`, `description TEXT`, `published_at TEXT`, `duration_ms INTEGER CHECK(duration_ms IS NULL OR duration_ms >= 0)`, `media_length_bytes INTEGER CHECK(media_length_bytes IS NULL OR media_length_bytes >= 0)`, `media_type TEXT`, `image_url TEXT`, `created_at TEXT NOT NULL`, `updated_at TEXT NOT NULL`, `UNIQUE(podcast_id, source_key)` |
+| `episode` | `id TEXT PRIMARY KEY` (stable local UUID), `podcast_id TEXT NOT NULL REFERENCES podcast(id) ON DELETE CASCADE`, `source_key TEXT NOT NULL`, `guid TEXT`, `media_url TEXT NOT NULL`, `title TEXT NOT NULL`, `description TEXT`, `published_at TEXT`, `duration_ms INTEGER CHECK(duration_ms IS NULL OR duration_ms >= 0)`, `media_length_bytes INTEGER CHECK(media_length_bytes IS NULL OR media_length_bytes >= 0)`, `media_type TEXT`, `image_url TEXT`, `created_at TEXT NOT NULL`, `updated_at TEXT NOT NULL`, `UNIQUE(podcast_id, source_key)` |
 | `playback` | `episode_id TEXT PRIMARY KEY REFERENCES episode(id) ON DELETE CASCADE`, `position_ms INTEGER NOT NULL DEFAULT 0 CHECK(position_ms >= 0)`, `duration_ms INTEGER`, `completed INTEGER NOT NULL DEFAULT 0 CHECK(completed IN (0,1))`, `updated_at TEXT NOT NULL` |
-| `download` | `episode_id TEXT PRIMARY KEY REFERENCES episode(id) ON DELETE CASCADE`, `state TEXT NOT NULL CHECK(state IN ('queued','downloading','complete','failed'))`, `relative_path TEXT`, `temp_relative_path TEXT`, `bytes_received INTEGER NOT NULL DEFAULT 0 CHECK(bytes_received >= 0)`, `bytes_total INTEGER`, `etag TEXT`, `last_modified TEXT`, `error_code TEXT`, `created_at TEXT NOT NULL`, `updated_at TEXT NOT NULL`, `completed_at TEXT`, con checks que exijan ruta final sólo para `complete` |
+| `download` | `episode_id TEXT PRIMARY KEY REFERENCES episode(id) ON DELETE CASCADE`, `state TEXT NOT NULL CHECK(state IN ('queued','downloading','complete','failed'))`, `relative_path TEXT`, `temp_relative_path TEXT`, `bytes_received INTEGER NOT NULL DEFAULT 0 CHECK(bytes_received >= 0)`, `bytes_total INTEGER`, `etag TEXT`, `last_modified TEXT`, `error_code TEXT`, `created_at TEXT NOT NULL`, `updated_at TEXT NOT NULL`, `completed_at TEXT`, with checks requiring a final path only for `complete` |
 | `catalog_cache` | `cache_key TEXT PRIMARY KEY`, `payload_relative_path TEXT NOT NULL`, `fetched_at TEXT NOT NULL`, `expires_at TEXT NOT NULL`, `etag TEXT`, `last_modified TEXT` |
-| `setting` | `key TEXT PRIMARY KEY`, `value TEXT NOT NULL`, limitada por repositorio a claves conocidas y no secretas |
+| `setting` | `key TEXT PRIMARY KEY`, `value TEXT NOT NULL`, restricted by the repository to known, non-secret keys |
 
-`source_key` se deriva en orden de `guid` no vacío, URL normalizada del enclosure o, como último recurso, hash de título+fecha+URL; así una actualización hace upsert y no duplica episodios. La baja de una suscripción elimina sólo `subscription`: no elimina podcast, episodios, progreso ni descargas. El borrado manual de una descarga elimina su archivo y fila de `download`, no suscripción, episodio ni `playback`.
+`source_key` is derived, in order, from a non-empty `guid`, the normalized enclosure URL, or, as a last resort, a hash of title+date+URL; this way an update performs an upsert instead of duplicating episodes. Unsubscribing removes only the `subscription` row: it does not remove the podcast, episodes, progress, or downloads. Manually deleting a download removes only its file and the `download` row, not the subscription, episode, or `playback`.
 
-Cada migración corre en una transacción y crea primero una copia de seguridad limitada de la base. Si falla, la app conserva la base previa, registra el error y no inicia en modo escritura. Cachés y descargas se escriben a un archivo temporal en el mismo directorio, se vacían con `fsync`, se validan y se publican con reemplazo atómico. Al arrancar, los `.part` quedan como descarga fallida/reanudable; jamás se presentan como completos. La caché puede descartarse si está corrupta, pero la aplicación mantiene el último registro local válido.
+Each migration runs in a transaction and first creates a bounded backup of the database. If it fails, the app keeps the previous database, logs the error, and does not start in write mode. Caches and downloads are written to a temporary file in the same directory, flushed with `fsync`, validated, and published via atomic replace. On startup, `.part` files are treated as failed/resumable downloads; they are never presented as complete. The cache may be discarded if corrupted, but the application retains the last valid local record.
 
-## 6. Reglas seguras para Podcast Index, HTTP y RSS
+## 6. Safety rules for Podcast Index, HTTP, and RSS
 
-### Credenciales de Podcast Index
+### Podcast Index credentials
 
-- `data/config/config.toml`, fuera del repositorio y con permisos `0600` cuando el sistema lo permita, contiene `api_key` y `api_secret`; el paquete incluye sólo nombres de campos de ejemplo vacíos.
-- Por cada petición se genera `X-Auth-Date` desde `Clock`, y `Authorization = SHA1(api_key + api_secret + X-Auth-Date)` conforme al contrato de Podcast Index; también se envían `X-Auth-Key` y un `User-Agent` estable. El secreto nunca se persiste en SQLite, logs, errores, fixtures ni URLs.
-- Si faltan credenciales, Explorar/Buscar explica cómo configurarlas, mientras RSS, biblioteca local, descargas y reproducción siguen disponibles.
-- Reloj inválido, 401/403, 429 y 5xx son errores tipados. Para 429 se respeta `Retry-After` acotado, sin bucle automático desde la UI; no se registran cuerpos potencialmente sensibles.
+- `data/config/config.toml`, outside the repository and with `0600` permissions where the system allows it, holds `api_key` and `api_secret`; the package only ships empty example field names.
+- For each request an `X-Auth-Date` is generated from `Clock`, and `Authorization = SHA1(api_key + api_secret + X-Auth-Date)` per the Podcast Index contract; `X-Auth-Key` and a stable `User-Agent` are also sent. The secret is never persisted in SQLite, logs, errors, fixtures, or URLs.
+- If credentials are missing, Explore/Search explains how to configure them, while RSS, the local library, downloads, and playback remain available.
+- An invalid clock, 401/403, 429, and 5xx are all typed errors. For 429, a bounded `Retry-After` is honored, with no automatic retry loop from the UI; potentially sensitive bodies are never logged.
 
-### Política HTTP(S) común
+### Common HTTP(S) policy
 
-- Sólo `https` para Podcast Index, imágenes y media remota. Para RSS público se admite `https` y, por compatibilidad con feeds existentes, `http`; la UI marca un feed HTTP como conexión no cifrada antes de confirmar. Una cadena iniciada en HTTPS nunca puede degradar a HTTP. Tras cada redirección se vuelve a validar esquema, puerto, host y destino.
-- Se permiten los puertos predeterminados 443/80 o un puerto explícito de la URL RSS; se bloquean URLs con usuario/contraseña, fragmentos, host vacío o literal IP local.
-- Para reducir SSRF en RSS suministrado por el usuario se rechazan, antes de conectar y en cada redirección, loopback, link-local, multicast, unspecified, rangos privados/reservados IPv4/IPv6 y nombres que resuelvan a cualquiera de ellos. Se limita a 5 redirecciones y se protege contra DNS rebinding usando las direcciones validadas por el transporte.
-- TLS usa el almacén CA incluido/documentado, verifica certificado y hostname y no ofrece modo “inseguro”. TLS o certificado fallido nunca cae a HTTP.
-- Timeouts por defecto: conexión 10 s, lectura 20 s y total 60 s para API/RSS/imágenes. Las descargas de audio tienen conexión 10 s, inactividad 30 s y no tienen un total corto, pero son cancelables.
-- Máximos: 2 MiB por respuesta JSON de catálogo, 5 MiB por RSS/XML, 4 MiB por imagen y un límite de descarga por episodio configurable (por defecto 2 GiB) más comprobación del espacio libre. Se corta el flujo al superar el límite aunque `Content-Length` falte o mienta.
-- Se aceptan respuestas comprimidas sólo con límite sobre bytes descomprimidos. Se restringen métodos a GET y HEAD, se codifican parámetros y no se concatenan consultas manualmente.
-- JSON se valida por forma, tipos y número máximo de resultados antes de persistir. XML se procesa con entidades externas, DTD, expansión de entidades y acceso de red deshabilitados; el parser trabaja sobre el cuerpo ya acotado. Feed y enclosure deben superar validación semántica.
-- ETag/Last-Modified se usan para solicitudes condicionales. Un 304 conserva la versión previa. Una respuesta nueva sólo sustituye caché y datos dentro de una transacción después de validar por completo.
-- La caché tiene TTL explícito por tipo. Una respuesta caducada puede mostrarse como “datos guardados” si la red falla, nunca como actualización reciente.
-- Los nombres de archivo se derivan del UUID local, no de título ni URL. Todas las rutas se resuelven y verifican bajo `data/`; no se siguen rutas procedentes del feed.
+- Only `https` is used for Podcast Index, images, and remote media. For public RSS, both `https` and, for compatibility with existing feeds, `http` are accepted; the UI flags an HTTP feed as an unencrypted connection before confirming. A chain that started on HTTPS can never downgrade to HTTP. Scheme, port, host, and destination are re-validated after every redirect.
+- Only the default ports 443/80 or an explicit port from the RSS URL are allowed; URLs with user/password, fragments, an empty host, or a literal local IP are blocked.
+- To reduce SSRF risk from user-supplied RSS, loopback, link-local, multicast, unspecified, and private/reserved IPv4/IPv6 ranges — and any hostname resolving to them — are rejected before connecting and on every redirect. Redirects are capped at 5, and protection against DNS rebinding uses the addresses validated by the transport.
+- TLS uses the bundled/documented CA store, verifies the certificate and hostname, and offers no "insecure" mode. A TLS or certificate failure never falls back to HTTP.
+- Default timeouts: 10 s connect, 20 s read, and 60 s total for API/RSS/images. Audio downloads use a 10 s connect timeout, a 30 s inactivity timeout, and no short total timeout, but are cancelable.
+- Maximums: 2 MiB per catalog JSON response, 5 MiB per RSS/XML document, 4 MiB per image, and a configurable per-episode download limit (2 GiB by default) plus a free-space check. The stream is cut off once the limit is exceeded, even if `Content-Length` is missing or wrong.
+- Compressed responses are accepted only with a limit on decompressed bytes. Methods are restricted to GET and HEAD, parameters are encoded, and queries are never concatenated manually.
+- JSON is validated for shape, types, and a maximum result count before being persisted. XML is processed with external entities, DTDs, entity expansion, and network access disabled; the parser operates on the already-bounded body. Feed and enclosure must pass semantic validation.
+- ETag/Last-Modified are used for conditional requests. A 304 keeps the previous version. A new response only replaces the cache and data inside a transaction, and only after full validation.
+- The cache has an explicit TTL per type. An expired response may be shown as "saved data" if the network fails, never as a fresh update.
+- File names are derived from the local UUID, not from title or URL. All paths are resolved and verified under `data/`; paths coming from the feed are never followed.
 
-## 7. Importación RSS y actualización
+## 7. RSS import and updates
 
-`docs/RSS-IMPORT.md` documentará un flujo sin teclado: apagar/sacar la SD o acceder a ella por el medio disponible, añadir una URL HTTPS por línea a `data/imports/rss_urls.txt`, insertar la SD e iniciar AnberPod. Se ignoran líneas vacías y comentarios `#`; se limita a 100 líneas y 2048 caracteres por URL. El archivo se lee bajo demanda desde Ajustes > Importar RSS, no silenciosamente al arrancar.
+`docs/RSS-IMPORT.md` will document a keyboard-free workflow: power off or eject the SD card (or access it by whatever means is available), add one HTTPS URL per line to `data/imports/rss_urls.txt`, reinsert the SD card, and start AnberPod. Blank lines and `#` comments are ignored; the file is capped at 100 lines and 2048 characters per URL. The file is read on demand from Settings > Import RSS, not silently at startup.
 
-Cada URL se normaliza, pasa la política SSRF, se descarga y parsea, y se muestra una previsualización antes de suscribir. Los resultados por línea (`OK`, `DUPLICADA` o código de error sin credenciales) se escriben atómicamente en `rss_urls.result.txt`; el archivo fuente no se borra. Una URL duplicada abre el podcast existente. Un fallo de una línea no revierte otras importaciones válidas.
+Each URL is normalized, passed through the SSRF policy, downloaded and parsed, and a preview is shown before subscribing. Per-line results (`OK`, `DUPLICATE`, or an error code with no credentials) are written atomically to `rss_urls.result.txt`; the source file is not deleted. A duplicate URL opens the existing podcast. A failure on one line does not roll back other valid imports.
 
-“Actualizar” existe en el detalle de un podcast y en Suscripciones para actualizar todas secuencialmente con cancelación. Sólo es bajo demanda. No hay temporizador de actualización, descarga implícita ni trabajo de red al entrar en una pantalla.
+"Update" exists on a podcast's detail screen and in Subscriptions to refresh all of them sequentially, with cancellation. It is on-demand only. There is no update timer, no implicit download, and no network activity when simply entering a screen.
 
-## 8. Descargas offline
+## 8. Offline downloads
 
-La acción “Descargar” crea una fila `queued` sólo después de comprobar URL HTTPS, límite configurado y espacio libre (tamaño conocido más un margen; si es desconocido, el máximo configurado). Un único trabajador pasa a `downloading`, escribe `<uuid>.part` en bloques, limita tamaño real y emite progreso a la UI. La v1 usa una descarga simultánea para evitar presión de memoria, almacenamiento y red.
+The "Download" action creates a `queued` row only after checking the HTTPS URL, the configured limit, and free space (known size plus a margin; if unknown, the configured maximum). A single worker moves it to `downloading`, writes `<uuid>.part` in chunks, enforces the actual size limit, and emits progress to the UI. v1 uses a single concurrent download to avoid memory, storage, and network pressure.
 
-Al terminar, el trabajador sincroniza el archivo, comprueba que haya bytes, valida el contenedor con el `ffmpeg` empaquetado sin decodificarlo completo y renombra atómicamente a `<uuid>.<ext-segura>`; sólo entonces marca `complete`. Error, cancelación, falta de espacio, media no válida o reinicio conservan diagnóstico y nunca crean un falso completo. Cuando servidor y validadores lo permiten, “Reintentar” reanuda con `Range` y exige una respuesta 206/`Content-Range` coherente; en cualquier ambigüedad reinicia el `.part` desde cero.
+On completion, the worker flushes the file, checks that bytes were received, validates the container with the bundled `ffmpeg` without fully decoding it, and atomically renames it to `<uuid>.<safe-ext>`; only then is it marked `complete`. Errors, cancellation, insufficient space, invalid media, or a restart all preserve diagnostics and never create a false "complete" state. When the server and validators allow it, "Retry" resumes with `Range` and requires a coherent 206/`Content-Range` response; on any ambiguity, the `.part` file is restarted from scratch.
 
-El borrado requiere confirmación, detiene una reproducción de ese archivo o se rechaza mientras está en uso, elimina sólo archivo/temporal y fila de descarga en una operación tolerante a reinicios, y conserva suscripción, metadatos y progreso. No hay limpieza automática por edad, espacio o actualización.
+Deletion requires confirmation, stops playback of that file (or is rejected while it's in use), removes only the file/temp file and the download row in a restart-tolerant operation, and preserves the subscription, metadata, and progress. There is no automatic cleanup based on age, space, or updates.
 
-## 9. Reproducción y guardado de progreso
+## 9. Playback and progress persistence
 
-`PlaybackService` elige archivo completo local antes que media HTTPS. Para remoto, valida de nuevo la URL y lanza el `ffmpeg` empaquetado con lista blanca de protocolos y opciones de reconexión/timeout acotadas; para local, pasa una ruta verificada bajo `data/downloads`. Los argumentos se entregan como lista, nunca mediante shell. `ffmpeg` escribe PCM por stdout y `aplay` recibe ese PCM por stdin; stderr se captura de forma acotada para diagnóstico y ningún proceso hereda secretos.
+`PlaybackService` prefers a complete local file over HTTPS media. For remote playback, it re-validates the URL and launches the bundled `ffmpeg` with a whitelist of protocols and bounded reconnect/timeout options; for local playback, it passes a verified path under `data/downloads`. Arguments are passed as a list, never through a shell. `ffmpeg` writes PCM to stdout and `aplay` receives that PCM on stdin; stderr is captured within bounds for diagnostics, and neither process inherits secrets.
 
-Una sesión tiene estados `idle`, `buffering`, `playing`, `paused`, `stopped`, `ended` y `error`. A reproduce/pausa; detener es una acción explícita del panel de reproducción; izquierda/derecha saltan −15/+30 segundos, acotados entre cero y duración conocida. Seek reinicia de forma controlada el pipeline con `-ss` en la posición solicitada. Stop, error y salida terminan ambos procesos con plazo, y luego escalamiento controlado, sin huérfanos.
+A session has the states `idle`, `buffering`, `playing`, `paused`, `stopped`, `ended`, and `error`. A plays/pauses; stop is an explicit action on the playback panel; left/right skip −15/+30 seconds, bounded between zero and the known duration. Seek restarts the pipeline in a controlled way using `-ss` at the requested position. Stop, error, and exit terminate both processes with a deadline, followed by controlled escalation, leaving no orphans.
 
-La posición se obtiene del reloj monotónico y de eventos del motor, no de fotogramas SDL. Se persiste en una transacción cada 10 segundos mientras reproduce y también al pausar, hacer seek, detener, recibir MENU, terminar o gestionar una salida normal. Escrituras se agrupan para no castigar la SD. Al finalizar se marca `completed=1`; reabrir un episodio completado empieza en cero sólo tras confirmación. Una posición mayor que duración o media cambiante se acota. Un cierre eléctrico puede perder como máximo el último intervalo de 10 segundos, no corromper el estado confirmado.
+Position is obtained from the monotonic clock and engine events, not from SDL frames. It is persisted in a transaction every 10 seconds during playback, and also on pause, seek, stop, receiving MENU, ending, or a normal exit. Writes are batched to avoid punishing the SD card. On finishing, `completed=1` is set; reopening a completed episode restarts from zero only after confirmation. A position greater than the duration, or a changing media length, is clamped. A power cut can lose at most the last 10-second interval, never corrupt confirmed state.
 
-Si falla el streaming, la UI conserva la última posición confirmada y ofrece reintentar; no descarga automáticamente. La pausa suspende el flujo de audio de forma verificable sin avanzar el contador. El cambio local/remoto no altera la misma fila de progreso del episodio.
+If streaming fails, the UI keeps the last confirmed position and offers a retry; it does not download automatically. Pause verifiably suspends the audio stream without advancing the counter. Switching between local and remote does not change the same episode's progress row.
 
-## 10. Entrada, navegación e interfaz 640×480
+## 10. Input, navigation, and the 640×480 interface
 
-La UI usa resolución lógica fija 640×480 y escala manteniendo proporción. Todo texto importante se representa con fuentes incluidas y Pillow/PySDL2, alto contraste, foco visible, truncado con elipsis y desplazamiento de listas; ninguna acción exige hover, táctil o teclado.
+The UI uses a fixed logical resolution of 640×480 and scales while preserving aspect ratio. All important text is rendered with bundled fonts and Pillow/PySDL2, with high contrast, visible focus, ellipsis truncation, and list scrolling; no action requires hover, touch, or a keyboard.
 
-Mapa global:
+Global control map:
 
-| Control | Acción |
+| Control | Action |
 |---|---|
-| Cruceta arriba/abajo | mover foco o elemento de lista |
-| Cruceta izquierda/derecha | cambiar pestaña/valor; en reproductor, −15/+30 s |
-| A | aceptar; en episodio/reproductor, reproducir/pausar según contexto |
-| B | volver una pantalla; cerrar diálogo sin confirmar |
-| MENU | guardar progreso, detener limpiamente procesos y salir desde cualquier pantalla |
+| D-pad up/down | move focus or list item |
+| D-pad left/right | change tab/value; in the player, −15/+30 s |
+| A | confirm; on episode/player screens, play/pause depending on context |
+| B | go back one screen; close a dialog without confirming |
+| MENU | save progress, cleanly stop processes, and exit from any screen |
 
-Se normaliza key-down y se ignora repetición accidental de A/B/MENU; la cruceta permite repetición con retardo. Los códigos SDL concretos se configuran tras capturarlos en hardware y se mantienen en una tabla aislada, con perfil de teclado sólo para desarrollo.
+Key-down is normalized and accidental repeats of A/B/MENU are ignored; the D-pad allows repeat-with-delay. The concrete SDL codes are configured after being captured on hardware and kept in an isolated table, with a keyboard profile reserved for development only.
 
-Ruta de pantallas:
+Screen flow:
 
 ```text
-Inicio
-├── Explorar -> Categorías -> Resultados -> Podcast -> Episodios -> Reproductor
-├── Buscar -> Teclado virtual -> Resultados -> Podcast -> Episodios -> Reproductor
-├── Suscripciones -> Podcast -> Episodios -> Reproductor
-├── Descargas -> Episodio/Reproductor
-└── Ajustes -> Importar RSS / credenciales detectadas / rutas y versión
+Home
+├── Explore -> Categories -> Results -> Podcast -> Episodes -> Player
+├── Search -> Virtual keyboard -> Results -> Podcast -> Episodes -> Player
+├── Subscriptions -> Podcast -> Episodes -> Player
+├── Downloads -> Episode/Player
+└── Settings -> Import RSS / detected credentials / paths and version
 ```
 
-Buscar usa teclado virtual manejable con cruceta, A (insertar) y B (borrar/volver mediante foco explícito), además de historial local opcional no sensible; nunca presupone teclado físico. Importar URL no usa ese teclado: usa el archivo documentado. Cada lista restaura foco y desplazamiento al volver. Acciones destructivas o de baja muestran confirmación. Indicadores distinguen sin ambigüedad suscrito, descargando, descargado, progreso, offline, carga y error. Los errores de red no sustituyen contenido local ni bloquean navegación.
+Search uses a virtual keyboard operable with the D-pad, A (insert), and B (delete/back via explicit focus), plus an optional local, non-sensitive history; it never assumes a physical keyboard. Importing a URL does not use that keyboard: it uses the documented file instead. Each list restores focus and scroll position when returning to it. Destructive or unsubscribe actions show a confirmation. Indicators unambiguously distinguish subscribed, downloading, downloaded, in-progress, offline, loading, and error states. Network errors never replace local content or block navigation.
 
-## 11. Lanzador, paquete y despliegue
+## 11. Launcher, package, and deployment
 
-El artefacto será un tar/zip con esta disposición de destino:
+The artifact will be a tar/zip with this destination layout:
 
 ```text
 Roms/APPS/
 ├── AnberPod.sh
 └── AnberPod/
-    ├── current/                    # aplicación Python, dependencias y assets
-    ├── runtime/bin/ffmpeg          # ELF ARM64 estático y ejecutable
-    ├── runtime/certs/cacert.pem    # CA versionada si MuOS no ofrece una fiable
-    ├── data/                       # se crea sólo si falta; no se empaqueta con contenido
+    ├── current/                    # Python application, dependencies, and assets
+    ├── runtime/bin/ffmpeg          # static, executable ARM64 ELF
+    ├── runtime/certs/cacert.pem    # versioned CA if MuOS doesn't provide a reliable one
+    ├── data/                       # created only if missing; never packaged with content
     └── README-INSTALL.txt
 ```
 
-`AnberPod.sh` será POSIX `sh`, resolverá su propio directorio sin depender del directorio de trabajo, definirá rutas absolutas de Python/app/datos/ffmpeg/CA, configurará SDL para la pantalla y ALSA sólo con valores comprobados en MuOS, creará directorios ausentes con permisos restrictivos, y redirigirá arranque y errores al log rotado. Verifica Python 3.10, ejecutables y escritura en datos; ante fallo escribe un diagnóstico legible y sale distinto de cero.
+`AnberPod.sh` will be POSIX `sh`, will resolve its own directory without depending on the working directory, will define absolute paths for Python/app/data/ffmpeg/CA, will configure SDL for the screen and ALSA using only values confirmed on MuOS, will create missing directories with restrictive permissions, and will redirect startup and errors to the rotated log. It verifies Python 3.10, the executables, and write access to data; on failure it writes a readable diagnostic and exits with a non-zero status.
 
-El bundle incluirá bytecode/fuentes Python y wheels puros o preconstruidos compatibles con ARM64; no hará `pip install` ni acceso de red en la consola. `ffmpeg` debe ser ARM64 estático, con licencia y procedencia documentadas, soporte de TLS/HTTPS y únicamente los protocolos/demuxers/decoders necesarios. `aplay` y el dispositivo ALSA se detectan durante la validación de instalación; si `aplay` no está disponible, la instalación falla con instrucciones, pues no se cambia silenciosamente a un reproductor del firmware.
+The bundle will include Python bytecode/sources and pure or prebuilt wheels compatible with ARM64; it will not run `pip install` or access the network on the console. `ffmpeg` must be a static ARM64 build, with documented license and provenance, TLS/HTTPS support, and only the protocols/demuxers/decoders that are needed. `aplay` and the ALSA device are detected during install validation; if `aplay` is unavailable, installation fails with instructions, since it never silently falls back to a firmware player.
 
-Una actualización publica primero `releases/<versión>` o `current.new`, valida contenido y cambia el selector de versión de forma atómica cuando sea posible. Nunca incluye `data/db`, `data/downloads`, `data/cache`, `data/imports`, `data/config` ni `data/logs`; tampoco ejecuta `rm` sobre `data`. Antes y después se calcula una huella de esos datos en la prueba de actualización. Debe existir una ruta de rollback del código que reutilice el mismo esquema cuando la migración sea compatible; las migraciones incompatibles requieren copia y procedimiento explícito.
+An update first publishes to `releases/<version>` or `current.new`, validates the content, and atomically switches the version selector when possible. It never includes `data/db`, `data/downloads`, `data/cache`, `data/imports`, `data/config`, or `data/logs`; nor does it ever run `rm` on `data`. A fingerprint of that data is computed before and after as part of the upgrade test. There must be a code rollback path that reuses the same schema when the migration is compatible; incompatible migrations require a copy and an explicit procedure.
 
-## 12. Fases y puertas de salida
+## 12. Phases and exit gates
 
-### Fase 0 — esqueleto reproducible y contratos
+### Phase 0 — reproducible skeleton and contracts
 
-Definir paquete Python 3.10, dependencias fijadas, modelos, puertos, configuración, logging con redacción, rutas de datos y tests de arquitectura. Crear un lanzador de diagnóstico que abre/cierra SDL y registra el arranque, todavía sin red ni audio.
+Define the Python 3.10 package, pinned dependencies, models, ports, configuration, logging with redaction, data paths, and architecture tests. Create a diagnostic launcher that opens/closes SDL and logs startup, still without network or audio.
 
-Puerta: tests unitarios sin red; bundle inspeccionable; arranque desde ruta con espacios; MENU cierra y deja log; escaneo confirma ausencia de secretos y media.
+Gate: unit tests with no network; inspectable bundle; startup from a path containing spaces; MENU closes and leaves a log; scan confirms no secrets or media are present.
 
-### Fase 1 — persistencia y biblioteca offline
+### Phase 1 — persistence and offline library
 
-Implementar esquema/migración, repositorios, pantalla Inicio/Suscripciones/Descargas/Ajustes con datos de fixture, navegación física y arranque offline. Añadir importación de archivo sólo hasta validación/previsualización con transporte falso.
+Implement the schema/migration, repositories, the Home/Subscriptions/Downloads/Settings screens with fixture data, physical navigation, and offline startup. Add file import, up to validation/preview only, using a fake transport.
 
-Puerta: migraciones idempotentes, recuperación tras caché/`.part` corruptos, navegación completa sin teclado ni red y actualización simulada que conserva byte por byte los datos.
+Gate: idempotent migrations, recovery from corrupted cache/`.part` files, complete navigation without keyboard or network, and a simulated update that preserves data byte-for-byte.
 
-### Fase 2 — RSS directo y suscripciones
+### Phase 2 — direct RSS and subscriptions
 
-Implementar transporte endurecido, parser RSS/Atom, importación real, detalle, episodios, alta/baja y actualización manual condicional. No incorporar todavía Podcast Index.
+Implement the hardened transport, the RSS/Atom parser, real importing, detail and episode screens, subscribe/unsubscribe, and conditional manual updates. Do not yet incorporate Podcast Index.
 
-Puerta: fixtures válidos y hostiles; límites/redirecciones/SSRF/TLS cubiertos; importar, suscribir, actualizar y desuscribir conserva episodios/progreso.
+Gate: valid and hostile fixtures; limits/redirects/SSRF/TLS all covered; importing, subscribing, updating, and unsubscribing preserves episodes/progress.
 
-### Fase 3 — Podcast Index y descubrimiento
+### Phase 3 — Podcast Index and discovery
 
-Implementar proveedor de credenciales, firma, categorías, búsqueda, caché y pantallas Explorar/Buscar con teclado virtual. Abrir resultado y suscribirse por su feed.
+Implement the credential provider, signing, categories, search, caching, and the Explore/Search screens with the virtual keyboard. Open a result and subscribe via its feed.
 
-Puerta: vectores deterministas de firma; 401/429/5xx/offline; ningún secreto en logs; criterios de categorías, búsqueda, apertura y suscripción en host y dispositivo.
+Gate: deterministic signature test vectors; 401/429/5xx/offline handling; no secrets in logs; category, search, open, and subscribe criteria verified on host and device.
 
-### Fase 4 — reproducción y reanudación
+### Phase 4 — playback and resume
 
-Integrar el binario ffmpeg fijado, `aplay`, motor de procesos, panel de reproducción, streaming HTTPS, seek y persistencia periódica. Probar primero con audio sintético HTTPS de licencia compatible.
+Integrate the pinned ffmpeg binary, `aplay`, the process engine, the playback panel, HTTPS streaming, seek, and periodic persistence. Test first with license-compatible synthetic HTTPS audio.
 
-Puerta: no se usa reproductor del firmware; play/pause/stop/seek; procesos sin huérfanos; reanudación tras salida y reinicio con pérdida máxima de 10 segundos; error remoto no destruye posición.
+Gate: no firmware player is used; play/pause/stop/seek work; no orphaned processes; resume works after exit and restart with a maximum loss of 10 seconds; a remote error does not destroy the position.
 
-### Fase 5 — descargas y reproducción offline
+### Phase 5 — downloads and offline playback
 
-Implementar trabajador único, límites, `.part`, reanudación segura, validación, publicación atómica, prioridad local y borrado manual aislado.
+Implement the single worker, limits, `.part` files, safe resume, validation, atomic publishing, local priority, and isolated manual deletion.
 
-Puerta: corte de red/espacio/reinicio; archivo parcial nunca reproducido; apagar red reproduce el completo; borrar conserva suscripción e historial; no hay automatismos de descarga o borrado.
+Gate: network/space/restart interruption handling; a partial file is never played; turning off the network still plays the completed file; deleting preserves subscription and history; no automatic download or deletion behavior exists.
 
-### Fase 6 — empaquetado y aceptación RG35XX H
+### Phase 6 — packaging and RG35XX H acceptance
 
-Fijar perfil SDL/input/ALSA de MuOS, construir bundle ARM64, documentar instalación/importación/credenciales/licencias, ejecutar actualización y matriz de aceptación en SD real.
+Pin the MuOS SDL/input/ALSA profile, build the ARM64 bundle, document installation/import/credentials/licenses, and run the update and acceptance matrix on a real SD card.
 
-Puerta: todas las pruebas de la sección 13, arranque desde `Roms/APPS`, logs útiles, funcionamiento offline y actualización no destructiva en dos ciclos consecutivos.
+Gate: all tests from section 13 pass; startup from `Roms/APPS`; useful logs; offline operation; and non-destructive updates across two consecutive cycles.
 
-## 13. Pruebas exactas y comandos de validación
+## 13. Exact tests and validation commands
 
-Los nombres siguientes forman el contrato del futuro repositorio. Los comandos se ejecutan desde su raíz con Python 3.10; ninguno de los tests unitarios/integración depende de Internet.
+The following names form the contract for the future repository. Commands are run from its root with Python 3.10; none of the unit/integration tests depend on the Internet.
 
-### Automatización de host
+### Host automation
 
 ```sh
 python3.10 -m venv .venv
@@ -297,7 +297,7 @@ SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy .venv/bin/python -m pytest -q
 .venv/bin/python -m pytest -q --cov=anberpod --cov-branch --cov-fail-under=85
 ```
 
-Casos mínimos obligatorios, con nombres estables:
+Minimum required cases, with stable names:
 
 - `test_schema_migrates_empty_db_and_is_idempotent`
 - `test_failed_migration_rolls_back_and_preserves_backup`
@@ -337,9 +337,9 @@ Casos mínimos obligatorios, con nombres estables:
 - `test_interrupted_download_is_not_playable_and_can_retry`
 - `test_no_use_case_starts_automatic_download_or_deletion`
 
-Los tests HTTP usarán un servidor TLS local con CA de prueba y un resolvedor falso controlable; no se desactivará la verificación TLS. Los tests del adaptador de procesos usarán ejecutables espía, no el audio del host. Fixtures de XML incluyen cuerpos truncados, content types erróneos, redirecciones, compresión bomba acotada y entidades maliciosas.
+HTTP tests will use a local TLS server with a test CA and a controllable fake resolver; TLS verification will never be disabled. Process-adapter tests will use spy executables, not the host's audio. XML fixtures include truncated bodies, incorrect content types, redirects, bounded compression bombs, and malicious entities.
 
-### Bundle y arquitectura
+### Bundle and architecture
 
 ```sh
 ./scripts/build_bundle.sh --arch aarch64 --version 0.1.0
@@ -352,19 +352,19 @@ build/stage/Roms/APPS/AnberPod/runtime/bin/ffmpeg -hide_banner -buildconf
 rg -n --hidden -i '(api[_-]?secret|authorization|BEGIN .*PRIVATE KEY|\.mp3|\.m4a|\.ogg)' build/stage dist
 ```
 
-`check_bundle.sh` debe fallar si el ELF no es AArch64, ffmpeg no es estático conforme al método documentado, faltan HTTPS/TLS o licencia, hay rutas absolutas de build, el paquete contiene secretos/media/DB/datos de usuario, el launcher no es ejecutable, o aparece un reproductor prohibido. El `rg` final permite únicamente nombres de campos vacíos/documentación y manifiestos de prueba expresamente listados; cualquier coincidencia inesperada falla el job.
+`check_bundle.sh` must fail if the ELF is not AArch64, ffmpeg is not static per the documented method, HTTPS/TLS support or license info is missing, build machine absolute paths are present, the package contains secrets/media/DB/user data, the launcher is not executable, or a prohibited player shows up. The final `rg` check only allows empty example field names/documentation and explicitly listed test manifests; any unexpected match fails the job.
 
-Prueba exacta de preservación durante actualización sobre un directorio temporal (implementada por `tests/integration/test_upgrade_bundle.py`):
+Exact preservation test for updates, run against a temporary directory (implemented by `tests/integration/test_upgrade_bundle.py`):
 
 ```sh
 .venv/bin/python -m pytest -q tests/integration/test_upgrade_bundle.py
 ```
 
-La prueba instala v0.1.0, crea configuración, DB, caché, progreso, descarga, import y log centinela, calcula SHA-256 y metadatos, instala v0.1.1 y comprueba que ningún archivo de `data/` fue sobrescrito o eliminado y que una migración sólo cambió la DB de la manera esperada.
+The test installs v0.1.0, creates configuration, a DB, cache, progress, a download, an import, and a sentinel log, computes SHA-256 hashes and metadata, installs v0.1.1, and checks that no file under `data/` was overwritten or deleted and that a migration only changed the DB in the expected way.
 
-### Validación en RG35XX H con MuOS
+### Validation on RG35XX H with MuOS
 
-Copiar primero a una SD de prueba y ejecutar desde el menú, no sólo desde SSH. Conservar en `docs/HARDWARE-VALIDATION.md` modelo, versión MuOS, filesystem, hash del bundle y resultado de cada paso.
+First copy to a test SD card and run from the menu, not only via SSH. Record in `docs/HARDWARE-VALIDATION.md` the device model, MuOS version, filesystem, bundle hash, and the result of each step.
 
 ```sh
 cd /mnt/mmc/Roms/APPS/AnberPod
@@ -377,37 +377,37 @@ test -w data
 tail -n 200 data/logs/anberpod.log
 ```
 
-La ruta `/mnt/mmc` es un marcador que se sustituirá por la ruta real descubierta en el dispositivo; el lanzador nunca la codifica. Matriz manual obligatoria:
+The `/mnt/mmc` path is a placeholder that will be replaced with the real path discovered on the device; the launcher never hardcodes it. Mandatory manual matrix:
 
-1. Iniciar desde `APPS` sin red; confirmar log de arranque, Inicio y datos locales.
-2. Recorrer cada pantalla sólo con cruceta/A/B; MENU desde cada pantalla guarda y sale sin proceso `ffmpeg`, `aplay` o Python huérfano.
-3. Con credenciales locales, abrir categorías, buscar con teclado virtual, abrir podcast, suscribirse y desuscribirse sin perder historial.
-4. Importar desde `rss_urls.txt`, revisar resultado, suscribirse y actualizar episodios bajo demanda.
-5. Reproducir HTTPS, pausar, saltar −15/+30, detener, reiniciar app y verificar reanudación dentro de ±10 s.
-6. Descargar manualmente, observar tamaño/estado, apagar red y reproducir el archivo local completo.
-7. Cortar red y energía durante otra descarga; reiniciar y confirmar que `.part` no se reproduce y que Reintentar funciona sin falso completo.
-8. Borrar una descarga y confirmar que suscripción, episodio y posición siguen presentes.
-9. Llenar la SD hasta el margen de seguridad y confirmar rechazo limpio, sin corrupción ni eliminación automática.
-10. Instalar la siguiente versión sobre una biblioteca poblada; comparar manifiesto/hash de datos y repetir arranque offline.
-11. Dejar reproducir y navegar durante 60 minutos; confirmar UI responsiva, audio sin degradación sostenida, memoria acotada, temperatura razonable y logs rotados.
+1. Start from `APPS` with no network; confirm the startup log, Home screen, and local data.
+2. Navigate every screen using only D-pad/A/B; MENU from any screen saves and exits with no orphaned `ffmpeg`, `aplay`, or Python process.
+3. With local credentials, open categories, search using the virtual keyboard, open a podcast, subscribe, and unsubscribe without losing history.
+4. Import from `rss_urls.txt`, review the result, subscribe, and update episodes on demand.
+5. Play over HTTPS, pause, skip −15/+30, stop, restart the app, and verify resume within ±10 s.
+6. Manually download, observe size/state, turn off the network, and play the completed local file.
+7. Cut network and power during another download; restart and confirm the `.part` file is not played and that Retry works without a false "complete" state.
+8. Delete a download and confirm the subscription, episode, and position remain present.
+9. Fill the SD card up to the safety margin and confirm clean rejection, with no corruption or automatic deletion.
+10. Install the next version over a populated library; compare the data manifest/hash and repeat the offline startup check.
+11. Leave it playing and navigating for 60 minutes; confirm a responsive UI, no sustained audio degradation, bounded memory usage, a reasonable temperature, and rotated logs.
 
-## 14. Riesgos que deben resolverse antes de congelar el paquete
+## 14. Risks that must be resolved before freezing the package
 
-- Capturar en el hardware real los códigos SDL de cruceta/A/B/MENU, el driver de vídeo, el dispositivo ALSA y la presencia/comportamiento de `aplay`; son datos de plataforma, no deben adivinarse en código.
-- Verificar que el build estático elegido de ffmpeg para AArch64 tiene HTTPS, codecs habituales de podcasts (MP3, AAC/M4A, Opus/Vorbis) y licencia redistribuible compatible, manteniendo tamaño razonable.
-- Medir rendimiento de decodificación, presión de escritura y duración de batería con streaming y archivo local. Si 48 kHz estéreo no es estable, cambiar el formato PCM una sola vez tras medición y actualizar contrato/tests.
-- Confirmar semántica de actualización y rutas de SD de la versión MuOS objetivo. El invariante no negociable es que `data/` quede fuera del contenido reemplazable.
-- Probar certificados y reloj del dispositivo: un reloj incorrecto debe producir diagnóstico accionable, nunca desactivar TLS ni falsificar autenticación.
+- Capture the real SDL codes for D-pad/A/B/MENU on actual hardware, the video driver, the ALSA device, and the presence/behavior of `aplay`; these are platform-specific facts that must not be guessed in code.
+- Verify that the chosen static ffmpeg build for AArch64 has HTTPS, common podcast codecs (MP3, AAC/M4A, Opus/Vorbis), and a compatible redistributable license, while keeping a reasonable size.
+- Measure decoding performance, write pressure, and battery life with both streaming and local file playback. If 48 kHz stereo is not stable, change the PCM format once, based on measurements, and update the contract/tests accordingly.
+- Confirm update semantics and SD card paths for the target MuOS version. The non-negotiable invariant is that `data/` stays out of the replaceable content.
+- Test the device's certificates and clock: an incorrect clock must produce an actionable diagnostic, never disable TLS or fake authentication.
 
-## 15. Trazabilidad de aceptación
+## 15. Acceptance traceability
 
-| Criterio | Fase | Evidencia principal |
+| Criterion | Phase | Primary evidence |
 |---|---:|---|
-| Categorías, búsqueda, abrir y suscribir | 3 | tests catálogo/navegación + matriz 3 |
-| Importar RSS, suscribir y ver episodios | 2 | tests import/parser/repositorio + matriz 4 |
-| Streaming, detener y reanudar | 4 | tests motor/progreso + matriz 5 |
-| Descargar, apagar red y reproducir SD | 5 | tests prioridad/atomicidad + matriz 6–7 |
-| Borrar descarga sin perder biblioteca/historial | 5 | tests de aislamiento + matriz 8 |
-| Arrancar desde `Roms/APPS`, registrar y preservar datos al actualizar | 0, 6 | `check_bundle`, test upgrade + matrices 1, 10 |
+| Categories, search, open, and subscribe | 3 | catalog/navigation tests + matrix 3 |
+| Import RSS, subscribe, and view episodes | 2 | import/parser/repository tests + matrix 4 |
+| Stream, stop, and resume | 4 | engine/progress tests + matrix 5 |
+| Download, turn off network, and play from SD | 5 | priority/atomicity tests + matrix 6–7 |
+| Delete a download without losing library/history | 5 | isolation tests + matrix 8 |
+| Start from `Roms/APPS`, log, and preserve data on update | 0, 6 | `check_bundle`, upgrade test + matrices 1, 10 |
 
-No se añaden prestaciones fuera de alcance para “completar” una fase. Cualquier cambio de esquema, red, reproducción o despliegue exige primero actualizar sus contratos, prueba de fallo y evidencia en hardware correspondiente.
+No out-of-scope features are added just to "complete" a phase. Any change to schema, network, playback, or deployment first requires updating its contracts, failure test, and corresponding hardware evidence.

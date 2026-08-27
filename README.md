@@ -1,35 +1,75 @@
 # AnberPod
 
-AnberPod currently implements phases 0–4 of `PLAN.md`: the executable offline
-foundation, transactional SQLite library, bounded public HTTP(S), hardened RSS
-parsing, explicit subscriptions and refresh, Podcast Index discovery/cache,
-downloads, physical navigation state, deterministic 640×480 rendering, an
-update-safe MuOS layout, and playback orchestration.
+A native podcast player for the Anbernic RG35XX H (MuOS firmware) — discover,
+subscribe, stream, and download podcasts with fully physical-button control,
+no on-device keyboard required.
 
-Playback uses a mockable controller and an isolated
-`ffmpeg` → raw S16LE/48 kHz/stereo PCM → `aplay` adapter. It resumes saved
-positions, prefers a size-verified complete local download, supports
-pause/resume, stop and fixed −15/+15 second seeking, and writes periodic
-progress checkpoints at most once per 10 seconds of playing time.
+![AnberPod home screen](docs/screenshots/home.png)
 
-Run the host diagnostic and create review screens with Python 3.11:
+## Features
 
-```sh
-python3.11 -m venv .venv
-.venv/bin/python -m pip install --require-hashes -r requirements-dev.lock
-PYTHONPATH=src .venv/bin/python -m anberpod \
-  --data-dir "$PWD/.local-data" --render-dir screenshots --demo
-```
+- **Discover** — browse Podcast Index categories or search by keyword.
+- **Direct RSS** — import any public RSS/Atom feed as an additional source.
+- **Subscriptions** — subscribe/unsubscribe locally, refresh episode lists on demand.
+- **Streaming playback** — HTTPS audio decoded by a bundled static ARM64
+  `ffmpeg` piped straight to ALSA `aplay`; no firmware media player involved.
+- **Offline downloads** — manual per-episode download with resume support;
+  local files are always preferred over the network when present.
+- **Resume position** — playback position is saved every ~10 seconds and on
+  every pause/seek/stop, so you always pick up where you left off.
+- **15 languages** — English, Spanish, Simplified Chinese, Hindi, French,
+  Arabic, Bengali, Portuguese, Russian, Urdu, Indonesian, German, Japanese,
+  Turkish, and Korean, including full RTL support for Arabic/Urdu.
+- **Fully offline-capable** — the app starts and browses saved data even with
+  no network at all; a small banner appears only when actually offline.
+- **Update-safe** — your subscriptions, downloads, playback history, and
+  settings live under `data/` and are never touched by a code update.
 
-To enable discovery, copy `packaging/muos/config.example.toml` to
-`data/config/config.toml`, fill in `[podcast_index]`, and restrict the file to
-the owning user (`chmod 600`) where supported. Credentials are never stored in
-SQLite, URLs, cache payloads, or logs.
+## Screenshots
 
-The runtime remains compatible with Python 3.10. Persistent state is always
-under the absolute `ANBERPOD_DATA_DIR`, outside replaceable release code. Tests
-use synthetic network responses and fake playback processes: host tests never
-run `ffmpeg`, invoke `aplay`, access an audio device, or require Internet.
+| Home | Explore | Search results |
+|---|---|---|
+| ![Home](docs/screenshots/home.png) | ![Explore](docs/screenshots/explore.png) | ![Search results](docs/screenshots/search-results.png) |
+
+| Now Playing | Downloads |
+|---|---|
+| ![Now Playing](docs/screenshots/player.png) | ![Downloads](docs/screenshots/downloads.png) |
+
+## Requirements
+
+- Anbernic RG35XX H (or a compatible device on the same MuOS/firmware family)
+  running MuOS.
+- Python 3.10+ on the device (bundled by MuOS).
+- A licensed static **AArch64/ARM64** `ffmpeg` build with HTTPS/TLS support
+  (see [Required ffmpeg placement](#required-arm64-ffmpeg-placement) below —
+  this repository does not redistribute one).
+- Optional: a free [Podcast Index](https://api.podcastindex.org/signup) API
+  key/secret to enable the Explore/Search catalog. Without it, direct RSS
+  import, your local library, downloads, and playback still work fully.
+
+## Installing on the device
+
+1. Build the release bundle on a development machine:
+
+   ```sh
+   ./scripts/build_bundle.sh --arch aarch64 --version <X.Y.Z>
+   ./scripts/check_bundle.sh dist/AnberPod-<X.Y.Z>-aarch64.tar.gz
+   ```
+
+2. Copy the resulting bundle to the SD card's `Roms/APPS/` directory. It
+   places `AnberPod.sh` next to an `AnberPod/` application directory
+   (`current/`, `runtime/`, and an empty `data/`).
+3. Supply the `ffmpeg` binary (see below) at
+   `Roms/APPS/AnberPod/runtime/bin/ffmpeg` with mode `0755`.
+4. Optional — enable Podcast Index discovery: copy
+   `packaging/muos/config.example.toml` to
+   `Roms/APPS/AnberPod/data/config/config.toml`, fill in `[podcast_index]`
+   with your own `api_key`/`api_secret`, and restrict the file to the owning
+   user (`chmod 600`) where supported.
+5. Launch **AnberPod** from the MuOS **APPS** menu.
+
+Updating later never touches `data/` (your subscriptions, downloads,
+playback history, and config survive every release).
 
 ## Required ARM64 ffmpeg placement
 
@@ -59,11 +99,37 @@ command -v aplay
 aplay -l
 ```
 
+## Development
+
+Run the host test suite and render deterministic review screenshots with
+Python 3.10+:
+
+```sh
+python3 -m venv .venv
+.venv/bin/pip install -e .
+.venv/bin/pip install pytest
+.venv/bin/python -m pytest -q
+PYTHONPATH=src .venv/bin/python -m anberpod \
+  --data-dir "$PWD/.local-data" --render-dir screenshots --demo
+```
+
+Playback uses a mockable controller and an isolated
+`ffmpeg` → raw S16LE/48 kHz/stereo PCM → `aplay` adapter. It resumes saved
+positions, prefers a size-verified complete local download, supports
+pause/resume, stop, and fixed ±15 second seeking, and writes periodic
+progress checkpoints at most once per 10 seconds of playing time.
+
+The runtime remains compatible with Python 3.10. Persistent state is always
+under the absolute `ANBERPOD_DATA_DIR`, outside replaceable release code.
+Host tests use synthetic network responses and fake playback processes; they
+never run `ffmpeg`, invoke `aplay`, access an audio device, or require the
+Internet, so `SDL2` and a real device are never required to run `pytest`.
+
 ## Mandatory on-device audible playback test
 
-Host tests cannot prove that the MuOS ALSA device, ARM64 binary, codecs, TLS, or
-physical buttons work. This exact test remains mandatory on a real RG35XX H
-running the target MuOS release:
+Host tests cannot prove that the MuOS ALSA device, ARM64 binary, codecs, TLS,
+or physical buttons work. This exact test remains mandatory on a real RG35XX H
+running the target MuOS release before calling a build release-ready:
 
 1. From MuOS **APPS**, start AnberPod with headphones or the speaker at a safe
    audible volume and networking enabled.
@@ -86,14 +152,13 @@ running the target MuOS release:
    wrong-size file must never be selected as local media.
 
 Record the device model, MuOS version, ALSA device, ffmpeg SHA-256/version,
-episode URL/license, and each pass/fail result. Until this passes, audible
-playback is not verified or release-ready.
+episode URL/license, and each pass/fail result.
 
-## Remaining MVP scope
+## License
 
-Remaining work includes the bundled ARM64 Python/ffmpeg/CA runtime and
-validation of SDL key codes, display, ALSA, and long-running behavior on a
-physical RG35XX H. The ffmpeg binary itself is deliberately absent from this
-tree. The command-line entry point remains a headless diagnostic/review path;
-it does not attempt audio. Playback is wired into `Application` and episode
-rows enter Player, ready for the eventual SDL runtime loop.
+MIT — see [LICENSE](LICENSE).
+
+FFmpeg is not bundled with this repository. If you distribute a release
+package that includes a static ffmpeg binary, see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the licensing
+obligations that apply to that binary.

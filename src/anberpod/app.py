@@ -13,7 +13,7 @@ from anberpod.adapters.http import PolicyHttpTransport, UrllibHttpAdapter
 from anberpod.adapters.podcast_index import LocalCatalogCredentials, PodcastIndexClient
 from anberpod.adapters.sqlite import Repositories
 from anberpod.config import DataPaths
-from anberpod.domain.errors import CatalogError, HttpPolicyError, MissingCatalogCredentialsError
+from anberpod.domain.errors import AnberPodError, CatalogError, HttpPolicyError, MissingCatalogCredentialsError
 from anberpod.domain.models import (
     DiscoveryResult,
     DownloadState,
@@ -26,9 +26,11 @@ from anberpod.domain.models import (
 from anberpod.domain.ports import ArtworkCachePort, Clock, ConnectivityProbe, MonotonicClock, PlaybackEngine
 from anberpod.i18n import DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES, normalize_language, resolve_system_language, t as translate
 from anberpod.services.artwork import ArtworkCache
+from anberpod.adapters.rss import DirectFeedReader
 from anberpod.logging import configure_logging
 from anberpod.services.startup import recover_local_state
 from anberpod.services.discovery import CatalogCache, DiscoveryService
+from anberpod.services.feeds import FeedService, UpdateStatus
 from anberpod.services.import_preview import ImportPreview, ImportStatus
 from anberpod.services.playback import PlaybackController, PlaybackSourceSelector
 from anberpod.ui.state import (
@@ -54,6 +56,7 @@ class Application:
     discovery: DiscoveryService
     playback: PlaybackController
     artwork_cache: ArtworkCachePort
+    feeds: FeedService
     language: str = DEFAULT_LANGUAGE
     _shutdown_logged: bool = False
     _selected_podcast_id: str | None = None
@@ -142,11 +145,16 @@ class Application:
             AtomicFiles(paths.root),
             PolicyHttpTransport(UrllibHttpAdapter()),
         )
+        feeds = FeedService(
+            DirectFeedReader(PolicyHttpTransport(UrllibHttpAdapter())),
+            repositories,
+            SystemClock(),
+        )
         # A valid persisted language always wins over system detection, per
         # the language-resolution rule mirrored from radio.app.state.
         language = normalize_language(repositories.settings.get("language")) or resolve_system_language()
         return cls(
-            paths, repositories, connectivity, AppState(), logger, discovery, playback, artwork_cache,
+            paths, repositories, connectivity, AppState(), logger, discovery, playback, artwork_cache, feeds,
             language=language,
         )
 
@@ -185,11 +193,19 @@ class Application:
             return
         if self.state.route is Route.PODCAST and event.action is InputAction.ACCEPT and not event.repeated:
             podcast_id = self._selected_podcast_id or ""
-            if self.state.focus == 1 and self.repositories.podcasts.get(podcast_id) is not None:
+            if self.state.focus == 0 and self.repositories.podcasts.get(podcast_id) is not None:
+                self.update_podcast(podcast_id)
+            elif self.state.focus == 1 and self.repositories.podcasts.get(podcast_id) is not None:
                 if self.repositories.podcasts.is_subscribed(podcast_id):
                     self.repositories.podcasts.unsubscribe(podcast_id)
                 else:
                     self.repositories.podcasts.subscribe(podcast_id, datetime.now(timezone.utc))
+                    # A catalog subscription only carries Podcast Index
+                    # metadata, not episodes; fetch the real RSS feed right
+                    # away so episodes are immediately available to play or
+                    # download instead of requiring a separate manual
+                    # "Update now" the user has no reason to expect.
+                    self.update_podcast(podcast_id)
             elif self.state.focus >= 2:
                 episodes = self.repositories.episodes.list_for_podcast(podcast_id)
                 episode_index = self.state.focus - 2
@@ -304,6 +320,18 @@ class Application:
     def _open_catalog_podcast(self, podcast: Podcast) -> None:
         self.repositories.podcasts.save(podcast)
         self.show_podcast(podcast.id)
+
+    def update_podcast(self, podcast_id: str) -> UpdateStatus | None:
+        """Fetch the podcast's real RSS feed so its episode list is current.
+
+        Returns ``None`` (rather than raising) on any network/parse failure
+        so callers on the input-handling path never crash the UI; the
+        existing local episode list, if any, is left untouched.
+        """
+        try:
+            return self.feeds.update(podcast_id)
+        except (AnberPodError, ValueError, OSError, TimeoutError):
+            return None
 
     def screen(self, route: Route | None = None) -> ScreenModel:
         selected = route or self.state.route

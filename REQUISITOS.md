@@ -1,51 +1,51 @@
-# AnberPod — requisitos confirmados
+# AnberPod — Confirmed Requirements
 
-## Producto
-Reproductor nativo de podcasts para Anbernic RG35XX H con MuOS, instalado desde el menú `APPS`. Debe poder descubrir podcasts, suscribirse a ellos, escuchar episodios y mantener el progreso de cada episodio únicamente en el dispositivo.
+## Product
+Native podcast player for the Anbernic RG35XX H with MuOS, installed from the `APPS` menu. It must be able to discover podcasts, subscribe to them, listen to episodes, and keep each episode's playback progress locally on the device only.
 
-## Alcance del MVP
+## MVP Scope
 
-1. **Inicio**: acceso a Explorar, Buscar, Suscripciones, Descargas y ajustes.
-2. **Descubrir**: categorías, búsqueda por texto y resultados provenientes de Podcast Index.
-3. **RSS directo**: añadir una URL de feed RSS como fuente adicional, validarla y obtener su metadato y episodios.
-4. **Suscripciones**: alta y baja local; episodios por podcast y actualización bajo demanda.
-5. **Reproducción**: streaming HTTPS; reproducir/pausar/detener; avance/retroceso; guardar posición con reanudación.
-6. **Descargas offline**: descarga manual de cada episodio, estado y tamaño; reproducir archivo local preferentemente; borrado manual. No habrá eliminación automática ni descargas automáticas.
-7. **Persistencia local**: suscripciones, posiciones de reproducción, descargas y cachés en la tarjeta SD. Las actualizaciones del programa nunca deben sobrescribir estos datos.
+1. **Home**: access to Explore, Search, Subscriptions, Downloads, and Settings.
+2. **Discovery**: categories, text search, and results sourced from Podcast Index.
+3. **Direct RSS**: add an RSS feed URL as an additional source, validate it, and fetch its metadata and episodes.
+4. **Subscriptions**: local subscribe/unsubscribe; per-podcast episode lists and on-demand refresh.
+5. **Playback**: HTTPS streaming; play/pause/stop; seek forward/backward; save position with resume.
+6. **Offline downloads**: manual per-episode download with state and size; prefer the local file when available; manual deletion. No automatic deletion or automatic downloads.
+7. **Local persistence**: subscriptions, playback positions, downloads, and caches live on the SD card. App updates must never overwrite this data.
 
-## Interacción y equipo
+## Interaction and hardware
 
 - Hardware: Anbernic RG35XX H.
 - Firmware: MuOS.
-- Pantalla lógica: 640×480.
-- Navegación con botones físicos: cruceta, A para aceptar/reproducir, B para volver, MENU para salir.
-- Debe funcionar sin teclado en la consola. La entrada de una URL RSS puede hacerse mediante un archivo de importación documentado en la tarjeta SD.
+- Logical screen resolution: 640×480.
+- Physical-button navigation: D-pad, A to accept/play, B to go back, MENU to exit.
+- Must work without an on-console keyboard. Entering an RSS URL can be done via a documented import file on the SD card.
 
-## Fuentes externas
+## External sources
 
-- Catálogo y categorías: Podcast Index, utilizando credenciales desde un fichero local fuera del repositorio o configuración del usuario.
-- RSS directos: feeds públicos suministrados por el usuario.
-- HTTP(S) con verificación TLS, límites de tiempo y tamaño, validación de XML y caché atómica.
+- Catalog and categories: Podcast Index, using credentials from a local file outside the repository or user configuration.
+- Direct RSS: public feeds supplied by the user.
+- HTTP(S) with TLS verification, time/size limits, XML validation, and atomic caching.
 
-## Restricciones técnicas
+## Technical constraints
 
-- Python 3.10, PySDL2 y Pillow compatibles con MuOS.
-- No depender de reproductores multimedia que incluya el firmware.
-- Incluir un `ffmpeg` estático ARM64 configurable o documentar el destino del binario; decodificar a PCM reproducido por ALSA/aplay.
-- La aplicación ha de poder iniciar sin conexión mostrando datos locales válidos.
-- El repositorio no contiene credenciales, podcasts privados ni descargas.
+- Python 3.10, PySDL2, and Pillow compatible with MuOS.
+- Must not depend on any media player bundled with the firmware.
+- Bundle a configurable static ARM64 `ffmpeg`, or document where the binary must be placed; decode to PCM played through ALSA/aplay.
+- The app must be able to start offline while showing valid local data.
+- The repository contains no credentials, private podcasts, or downloads.
 
-## Fuera de alcance inicial
+## Out of initial scope
 
-- Cuentas de usuario, sincronización entre dispositivos y analítica.
-- Recomendaciones personalizadas.
-- Descargas automáticas, colas y reproducción a velocidad variable.
+- User accounts, cross-device sync, and analytics.
+- Personalized recommendations.
+- Automatic downloads, queues, and variable-speed playback.
 
-## Criterios de aceptación
+## Acceptance criteria
 
-- Un usuario puede navegar categorías, buscar, abrir un podcast y suscribirse.
-- Puede importar un RSS, suscribirse y ver sus episodios.
-- Puede reproducir un episodio remoto, parar y reanudar desde la posición guardada.
-- Puede descargar manualmente un episodio, apagar la red y reproducirlo desde la SD.
-- Puede borrar una descarga sin perder la suscripción ni el historial.
-- La app funciona desde `Roms/APPS`, registra arranque y errores, y no sobrescribe estado local al actualizar.
+- A user can browse categories, search, open a podcast, and subscribe.
+- Can import an RSS feed, subscribe, and see its episodes.
+- Can play a remote episode, stop, and resume from the saved position.
+- Can manually download an episode, turn off the network, and play it from the SD card.
+- Can delete a download without losing the subscription or history.
+- The app runs from `Roms/APPS`, logs startup and errors, and never overwrites local state on update.

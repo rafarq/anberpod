@@ -15,6 +15,24 @@ def _pixel_present(image: Image.Image, color: tuple[int, int, int], box) -> bool
     return any(pixel == color for pixel in cropped.getdata())
 
 
+def test_focused_item_is_always_visible_in_a_long_list() -> None:
+    """Regression: the renderer used to hard-clip to the first 9 items with
+    no scrolling, so focus movement past that point was invisible (e.g.
+    Podcast Index's 100+ Explore categories)."""
+    renderer = Renderer()
+    items = tuple(f"Category {i}" for i in range(120))
+
+    early = ScreenModel(Route.EXPLORE, "Explore", items, focus=0, footer="footer")
+    late = ScreenModel(Route.EXPLORE, "Explore", items, focus=110, footer="footer")
+
+    early_frame = renderer.render(early)
+    late_frame = renderer.render(late)
+
+    # Different focus positions in a long list must render visibly
+    # different frames (the visible window must have scrolled).
+    assert list(early_frame.getdata()) != list(late_frame.getdata())
+
+
 def test_offline_banner_only_renders_when_actually_offline() -> None:
     renderer = Renderer()
     screen = ScreenModel(Route.SUBSCRIPTIONS, "Subscriptions", (), footer="footer")

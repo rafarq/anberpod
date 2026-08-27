@@ -106,7 +106,21 @@ class Renderer:
             draw.text((32, y + 30), t("nothing_here_hint"), font=self.small_font, fill="#7587a3")
         item_font = self.small_font if dense else self.item_font
         step = 27 if dense else 42
-        for index, item in enumerate(screen.items[:9]):
+        visible_rows = 9 if dense else 6
+        # Scroll the visible window so the focused row is always shown: keep
+        # focus roughly centered instead of hard-clipping to the first N
+        # items, which previously made focus movement invisible once a list
+        # (e.g. Explore's 100+ Podcast Index categories) exceeded one screen.
+        window_start = max(0, min(screen.focus - visible_rows // 2, max(0, len(screen.items) - visible_rows)))
+        window_end = window_start + visible_rows
+        visible_items = screen.items[window_start:window_end]
+        if window_start > 0:
+            draw.text((600, y - 20), "▲", font=self.small_font, fill="#7587a3", anchor="ra")
+        if window_end < len(screen.items):
+            bottom_arrow_y = y + step * len(visible_items)
+            draw.text((600, bottom_arrow_y), "▼", font=self.small_font, fill="#7587a3", anchor="ra")
+        for offset, item in enumerate(visible_items):
+            index = window_start + offset
             selected = index == screen.focus
             if selected:
                 bottom = y + (21 if dense else 29)

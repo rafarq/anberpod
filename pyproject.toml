@@ -4,9 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "anberpod"
-version = "0.1.2"
+version = "0.1.3"
 description = "Local/offline foundation for AnberPod on MuOS"
 requires-python = ">=3.10"
+license = "MIT"
 dependencies = ["Pillow==12.3.0"]
 
 [project.scripts]
