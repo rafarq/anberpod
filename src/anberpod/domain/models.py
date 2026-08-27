@@ -34,6 +34,7 @@ class InputAction(str, Enum):
     ACCEPT = "accept"
     BACK = "back"
     MENU = "menu"
+    DELETE = "delete"
 
 
 @dataclass(frozen=True)

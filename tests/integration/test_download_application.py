@@ -389,3 +389,95 @@ def test_download_ui_translations_for_supported_languages(tmp_path: Path) -> Non
     app.set_language("zh-Hans")
     screen = app.screen()
     assert screen.items == ("播放", "下载")
+
+
+def test_downloads_route_delete_action_removes_download_and_updates_focus(tmp_path: Path) -> None:
+    app, _, _ = create_app(tmp_path)
+
+    # Create 2 episodes and downloads
+    episode_2 = Episode(
+        "ep-2", "pod-1", "guid:ep-2", "https://cdn.example.test/ep2.mp3", "Episode Two",
+        duration_ms=60_000, created_at=NOW, updated_at=NOW,
+    )
+    app.repositories.episodes.upsert(episode_2)
+
+    complete_file = app.paths.root / "downloads" / "ep-1.mp3"
+    complete_file.parent.mkdir(parents=True, exist_ok=True)
+    complete_file.write_bytes(b"DATA1")
+    app.repositories.downloads.save(Download(
+        "ep-1", DownloadState.COMPLETE, relative_path="downloads/ep-1.mp3",
+        bytes_received=5, bytes_total=5, created_at=NOW, updated_at=NOW, completed_at=NOW,
+    ))
+    app.repositories.downloads.save(Download(
+        "ep-2", DownloadState.FAILED, error_code="failed",
+        bytes_received=0, bytes_total=10, created_at=NOW, updated_at=NOW,
+    ))
+
+    app.state.show(Route.DOWNLOADS, 2)
+    assert len(app.screen().items) == 2
+
+    # Focus 0 (ep-1) and press DELETE (X button)
+    app.state.focus = 0
+    app.handle(InputEvent(InputAction.DELETE))
+
+    assert not complete_file.exists()
+    assert app.repositories.downloads.get("ep-1") is None
+    assert len(app.screen().items) == 1
+    assert "Episode Two" in app.screen().items[0]
+
+    # Delete remaining download (ep-2)
+    app.handle(InputEvent(InputAction.DELETE))
+    assert app.repositories.downloads.get("ep-2") is None
+    assert len(app.screen().items) == 0
+    assert app.state.focus == 0
+
+
+def test_episode_actions_delete_action_only_deletes_when_complete(tmp_path: Path) -> None:
+    app, _, _ = create_app(tmp_path)
+
+    # Case 1: Complete download -> DELETE deletes it
+    download_file = app.paths.root / "downloads" / "ep-1.mp3"
+    download_file.parent.mkdir(parents=True, exist_ok=True)
+    download_file.write_bytes(b"DATA")
+    app.repositories.downloads.save(Download(
+        "ep-1", DownloadState.COMPLETE, relative_path="downloads/ep-1.mp3",
+        bytes_received=4, bytes_total=4, created_at=NOW, updated_at=NOW, completed_at=NOW,
+    ))
+
+    app.show_podcast("pod-1")
+    app.state.focus = 2
+    app.handle(InputEvent(InputAction.ACCEPT))  # Open EPISODE_ACTIONS
+
+    assert app.state.podcast_view is PodcastView.EPISODE_ACTIONS
+    assert app.screen().items == ("Play", "Delete download")
+
+    app.handle(InputEvent(InputAction.DELETE))
+    assert not download_file.exists()
+    assert app.repositories.downloads.get("ep-1") is None
+    assert app.screen().items == ("Play", "Download")
+
+    # Case 2: Not downloaded -> DELETE is a no-op
+    app.handle(InputEvent(InputAction.DELETE))
+    assert app.repositories.downloads.get("ep-1") is None
+    assert app.screen().items == ("Play", "Download")
+
+    # Case 3: Failed download -> DELETE does NOT delete (only complete downloads are deleted)
+    app.repositories.downloads.save(Download(
+        "ep-1", DownloadState.FAILED, error_code="timeout",
+        bytes_received=0, bytes_total=100, created_at=NOW, updated_at=NOW,
+    ))
+    app.handle(InputEvent(InputAction.DELETE))
+    assert app.repositories.downloads.get("ep-1") is not None
+    assert app.repositories.downloads.get("ep-1").state is DownloadState.FAILED
+
+
+def test_downloads_footer_localized_in_english_and_spanish(tmp_path: Path) -> None:
+    app, _, _ = create_app(tmp_path)
+
+    app.set_language("en")
+    screen_en = app.screen(Route.DOWNLOADS)
+    assert screen_en.footer == "D-Pad Navigate   A Open/Actions   X Delete   B Back   MENU Exit"
+
+    app.set_language("es")
+    screen_es = app.screen(Route.DOWNLOADS)
+    assert screen_es.footer == "D-Pad Navegar   A Abrir/Acciones   X Eliminar   B Atrás   MENU Salir"

@@ -27,7 +27,7 @@ def test_downloads_view_model_formats_state_size_and_error_deterministically() -
     )
     assert screen.focus == 1
     assert screen.status == "Offline - complete downloads remain playable"
-    assert screen.footer == "D-Pad Navigate   A Open/Actions   B Back   MENU Exit"
+    assert screen.footer == "D-Pad Navigate   A Open/Actions   X Delete   B Back   MENU Exit"
 
 
 def test_downloads_headless_render_is_deterministic_640x480(tmp_path: Path) -> None:

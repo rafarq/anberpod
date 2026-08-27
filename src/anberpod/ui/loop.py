@@ -50,6 +50,7 @@ _AXIS_ACTIONS = {
 _BUTTON_ACTIONS = {
     "A": InputAction.ACCEPT,
     "B": InputAction.BACK,
+    "X": InputAction.DELETE,
     "MENU": InputAction.MENU,
     "START": InputAction.MENU,
 }

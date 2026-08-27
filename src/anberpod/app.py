@@ -252,24 +252,39 @@ class Application:
             if self._search_results and self._search_results.items:
                 self._open_catalog_podcast(self._search_results.items[self.state.focus])
             return
-        if self.state.route is Route.DOWNLOADS and event.action is InputAction.ACCEPT and not event.repeated:
-            rows = self.repositories.database.connection.execute(
-                """SELECT episode.id, episode.title, download.state, download.bytes_received,
-                download.bytes_total, download.error_code FROM download
-                JOIN episode ON episode.id=download.episode_id ORDER BY download.created_at, episode.id"""
-            ).fetchall()
-            if rows and self.state.focus < len(rows):
-                episode_id = rows[self.state.focus][0]
-                state = DownloadState(rows[self.state.focus][2])
-                episode = self.repositories.episodes.get(episode_id)
-                if episode is not None:
-                    if state is DownloadState.COMPLETE:
-                        self.play_episode(episode)
-                        return
-                    elif state in (DownloadState.FAILED, DownloadState.QUEUED):
-                        self.download_episode(episode)
-                        return
-            return
+        if self.state.route is Route.DOWNLOADS:
+            if event.action is InputAction.ACCEPT and not event.repeated:
+                rows = self.repositories.database.connection.execute(
+                    """SELECT episode.id, episode.title, download.state, download.bytes_received,
+                    download.bytes_total, download.error_code FROM download
+                    JOIN episode ON episode.id=download.episode_id ORDER BY download.created_at, episode.id"""
+                ).fetchall()
+                if rows and self.state.focus < len(rows):
+                    episode_id = rows[self.state.focus][0]
+                    state = DownloadState(rows[self.state.focus][2])
+                    episode = self.repositories.episodes.get(episode_id)
+                    if episode is not None:
+                        if state is DownloadState.COMPLETE:
+                            self.play_episode(episode)
+                            return
+                        elif state in (DownloadState.FAILED, DownloadState.QUEUED):
+                            self.download_episode(episode)
+                            return
+                return
+            if event.action is InputAction.DELETE and not event.repeated:
+                rows = self.repositories.database.connection.execute(
+                    """SELECT episode.id, episode.title, download.state, download.bytes_received,
+                    download.bytes_total, download.error_code FROM download
+                    JOIN episode ON episode.id=download.episode_id ORDER BY download.created_at, episode.id"""
+                ).fetchall()
+                if rows and self.state.focus < len(rows):
+                    episode_id = rows[self.state.focus][0]
+                    self.delete_download(episode_id)
+                    remaining = self.repositories.database.connection.execute(
+                        """SELECT COUNT(*) FROM download JOIN episode ON episode.id=download.episode_id"""
+                    ).fetchone()[0]
+                    self.state.set_item_count(remaining)
+                return
         if self.state.route is Route.PODCAST:
             podcast_id = self._selected_podcast_id or ""
             podcast = self.repositories.podcasts.get(podcast_id)
@@ -295,6 +310,15 @@ class Application:
                                 self.download_episode(episode)
                             self.state.set_item_count(2)
                             return
+                    return
+                if event.action is InputAction.DELETE and not event.repeated:
+                    episode = self.repositories.episodes.get(self._selected_episode_id or "")
+                    if episode is not None:
+                        download = self.repositories.downloads.get(episode.id)
+                        is_complete = download is not None and download.state is DownloadState.COMPLETE
+                        if is_complete:
+                            self.delete_download(episode.id)
+                            self.state.set_item_count(2)
                     return
             else:  # PodcastView.EPISODES
                 if event.action is InputAction.ACCEPT and not event.repeated:

@@ -96,3 +96,11 @@ def test_input_reader_open_close_real_device_node(tmp_path):
     finally:
         reader.close()
     assert reader.is_open is False
+
+
+def test_button_mapping_includes_x_delete():
+    from anberpod.domain.models import InputAction
+    from anberpod.ui.loop import _BUTTON_ACTIONS
+
+    assert _BUTTON_ACTIONS["X"] == InputAction.DELETE
+    assert InputAction.DELETE.value == "delete"

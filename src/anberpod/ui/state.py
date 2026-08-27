@@ -263,7 +263,7 @@ class AppState:
         self.focus = min(self.focus, max(0, self._item_count - 1))
 
     def handle(self, event: InputEvent) -> None:
-        if event.repeated and event.action in {InputAction.ACCEPT, InputAction.BACK, InputAction.MENU}:
+        if event.repeated and event.action in {InputAction.ACCEPT, InputAction.BACK, InputAction.MENU, InputAction.DELETE}:
             return
         if event.action is InputAction.MENU:
             self.exit_requested = True
