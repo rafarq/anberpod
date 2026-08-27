@@ -137,13 +137,18 @@ class PodcastIndexClient:
         if not 1 <= limit <= MAX_SEARCH_RESULTS:
             raise ValueError("search limit must be between 1 and 100")
         payload = self._get("search/byterm", {"q": clean_query, "max": str(limit)})
-        return [_podcast(item) for item in _list_field(payload, "feeds", limit)]
+        results: list[Podcast] = []
+        for item in _list_field(payload, "feeds", limit):
+            podcast = _podcast(item, strict=False)
+            if podcast is not None:
+                results.append(podcast)
+        return results
 
     def podcast(self, feed_id: int) -> Podcast | None:
         if not _integer(feed_id) or feed_id <= 0:
             raise ValueError("feed_id must be a positive integer")
         feeds = _list_field(self._get("podcasts/byfeedid", {"id": str(feed_id)}), "feed", 1)
-        return _podcast(feeds[0]) if feeds else None
+        return _podcast(feeds[0], strict=True) if feeds else None
 
 
 def _header(headers: Mapping[str, str], name: str) -> str | None:
@@ -179,25 +184,42 @@ def _optional_https(item: Mapping[str, Any], key: str) -> str | None:
     return value
 
 
-def _podcast(value: Any) -> Podcast:
-    if not isinstance(value, dict):
-        raise CatalogDataError("Podcast Index feed is invalid")
-    identifier = value.get("id")
-    feed_url = value.get("url")
-    title = value.get("title")
-    if not _integer(identifier) or identifier <= 0:
-        raise CatalogDataError("Podcast Index feed id is invalid")
-    if not isinstance(feed_url, str) or not feed_url or len(feed_url) > 2048 or urlsplit(feed_url).scheme != "https":
-        raise CatalogDataError("Podcast Index feed URL must use HTTPS")
-    if not isinstance(title, str) or not title.strip() or len(title) > 300:
-        raise CatalogDataError("Podcast Index feed title is invalid")
-    return Podcast(
-        id=f"catalog:{identifier}",
-        feed_url=feed_url,
-        title=title.strip(),
-        author=_optional_text(value, "author", 300),
-        description=_optional_text(value, "description", 10_000),
-        image_url=_optional_https(value, "image"),
-        language=_optional_text(value, "language", 32),
-        catalog_id=identifier,
-    )
+def _podcast(value: Any, *, strict: bool = True) -> Podcast | None:
+    """Map one Podcast Index feed entry to a Podcast.
+
+    With ``strict=False`` (used for search result lists), a malformed or
+    non-HTTPS individual entry is skipped by returning ``None`` instead of
+    raising, so one bad row in a page of otherwise-valid results doesn't
+    discard the whole search response -- real-world Podcast Index data
+    legitimately still contains some http:// legacy feed URLs even though
+    this app only ever plays/imports https:// feeds. ``strict=True`` (used
+    for an exact single-feed lookup by id) still raises, since the caller
+    asked for one specific feed and a validation failure there is a real
+    data problem worth surfacing rather than silently returning nothing.
+    """
+    try:
+        if not isinstance(value, dict):
+            raise CatalogDataError("Podcast Index feed is invalid")
+        identifier = value.get("id")
+        feed_url = value.get("url")
+        title = value.get("title")
+        if not _integer(identifier) or identifier <= 0:
+            raise CatalogDataError("Podcast Index feed id is invalid")
+        if not isinstance(feed_url, str) or not feed_url or len(feed_url) > 2048 or urlsplit(feed_url).scheme != "https":
+            raise CatalogDataError("Podcast Index feed URL must use HTTPS")
+        if not isinstance(title, str) or not title.strip() or len(title) > 300:
+            raise CatalogDataError("Podcast Index feed title is invalid")
+        return Podcast(
+            id=f"catalog:{identifier}",
+            feed_url=feed_url,
+            title=title.strip(),
+            author=_optional_text(value, "author", 300),
+            description=_optional_text(value, "description", 10_000),
+            image_url=_optional_https(value, "image"),
+            language=_optional_text(value, "language", 32),
+            catalog_id=identifier,
+        )
+    except CatalogDataError:
+        if strict:
+            raise
+        return None

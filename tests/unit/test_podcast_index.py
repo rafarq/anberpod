@@ -113,18 +113,50 @@ def test_client_validates_categories_and_search_results() -> None:
     "payload",
     [
         {"feeds": "not-a-list"},
-        {"feeds": [{"id": True, "url": "https://feeds.example.test/feed", "title": "Bad id"}]},
-        {"feeds": [{"id": 1, "url": "http://feeds.example.test/feed", "title": "Insecure"}]},
-        {"feeds": [{"id": 1, "url": "https://feeds.example.test/feed", "title": ""}]},
         {"feeds": [{"id": index, "url": f"https://feeds.example.test/{index}", "title": "Too many"}
                    for index in range(3)]},
     ],
 )
-def test_bad_search_data_is_rejected_without_partial_results(payload: object) -> None:
+def test_bad_search_response_shape_is_rejected(payload: object) -> None:
+    """A malformed *response* (wrong overall shape, too many rows) is a real
+    data-integrity problem and must still raise."""
     catalog = client(RecordingTransport(response(payload)))
 
     with pytest.raises(CatalogDataError):
         catalog.search("bad", 2)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"feeds": [{"id": True, "url": "https://feeds.example.test/feed", "title": "Bad id"}]},
+        {"feeds": [{"id": 1, "url": "http://feeds.example.test/feed", "title": "Insecure"}]},
+        {"feeds": [{"id": 1, "url": "https://feeds.example.test/feed", "title": ""}]},
+    ],
+)
+def test_malformed_individual_search_result_is_skipped_not_rejected(payload: object) -> None:
+    """A single malformed row (e.g. Podcast Index legitimately still serving
+    some legacy http:// feed URLs) must not discard an otherwise-valid page
+    of search results -- only that row is skipped."""
+    catalog = client(RecordingTransport(response(payload)))
+
+    assert catalog.search("bad", 2) == []
+
+
+def test_mixed_valid_and_malformed_search_results_keeps_the_valid_ones() -> None:
+    """Regression: a real-world response mixing valid https:// feeds with a
+    legacy http:// feed used to discard the entire batch, hiding otherwise
+    good results from the user."""
+    payload = {"feeds": [
+        {"id": 1, "url": "https://feeds.example.test/good-one.xml", "title": "Good Show One"},
+        {"id": 2, "url": "http://feeds.example.test/insecure.xml", "title": "Insecure Show"},
+        {"id": 3, "url": "https://feeds.example.test/good-two.xml", "title": "Good Show Two"},
+    ]}
+    catalog = client(RecordingTransport(response(payload)))
+
+    results = catalog.search("mixed", 3)
+
+    assert [item.title for item in results] == ["Good Show One", "Good Show Two"]
 
 
 def test_catalog_status_errors_are_typed_and_rate_limit_does_not_retry() -> None:
