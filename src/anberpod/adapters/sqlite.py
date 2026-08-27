@@ -239,7 +239,7 @@ class DownloadSqliteRepository:
 
 
 class SettingsSqliteRepository:
-    KNOWN_KEYS = {"theme", "download_limit_bytes", "last_screen"}
+    KNOWN_KEYS = {"theme", "download_limit_bytes", "last_screen", "language"}
 
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection

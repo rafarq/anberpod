@@ -2,10 +2,20 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Callable
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
+from anberpod.i18n import DEFAULT_LANGUAGE
+from anberpod.i18n import t as _translate
+
 from .state import HOME_ROUTES, PlayerViewModel, Route, ScreenModel
+
+Translator = Callable[..., str]
+
+
+def _default_translator(key: str, **kwargs: object) -> str:
+    return _translate(key, DEFAULT_LANGUAGE, **kwargs)
 
 
 WIDTH = 640
@@ -45,7 +55,12 @@ def _font(size: int):  # type: ignore[no-untyped-def]
     try:
         return ImageFont.truetype("DejaVuSans.ttf", size=size)
     except OSError:
-        return ImageFont.load_default()
+        # Pillow 9.0.1 on-device (see MuOS/RG35XX H notes) does not accept
+        # a size argument on the bitmap fallback font.
+        try:
+            return ImageFont.load_default(size=size)  # type: ignore[call-arg]
+        except TypeError:
+            return ImageFont.load_default()
 
 
 @lru_cache(maxsize=len(HOME_ICON_FILES))
@@ -63,55 +78,58 @@ def _load_icon(filename: str) -> Image.Image | None:
 
 class Renderer:
     def __init__(self, *, artwork_root: Path | None = None) -> None:
-        self.title_font = _font(30)
-        self.item_font = _font(23)
-        self.small_font = _font(16)
+        # Sized down from the original 30/23/16 so more content fits the
+        # 640x480 canvas without clipping, including longer translated
+        # strings and non-Latin scripts (Arabic/Bengali/Devanagari/CJK).
+        self.title_font = _font(24)
+        self.item_font = _font(18)
+        self.small_font = _font(13)
         self.artwork_root = artwork_root.expanduser().resolve() if artwork_root is not None else None
 
-    def render(self, screen: ScreenModel) -> Image.Image:
+    def render(self, screen: ScreenModel, t: Translator = _default_translator) -> Image.Image:
         if screen.route is Route.HOME:
-            return self._render_home(screen)
+            return self._render_home(screen, t)
 
         image = Image.new("RGB", (WIDTH, HEIGHT), "#0a1020")
         draw = ImageDraw.Draw(image)
-        draw.rectangle((0, 0, WIDTH, 68), fill="#16233f")
-        draw.rectangle((0, 68, 8, HEIGHT), fill="#36c2b4")
-        draw.text((26, 16), "ANBERPOD", font=self.title_font, fill="#f6f8ff")
-        draw.text((610, 22), "OFFLINE", font=self.small_font, fill="#8ca0bd", anchor="ra")
-        draw.text((26, 88), screen.title, font=self.title_font, fill="#78e0d4")
+        draw.rectangle((0, 0, WIDTH, 60), fill="#16233f")
+        draw.rectangle((0, 60, 8, HEIGHT), fill="#36c2b4")
+        draw.text((22, 14), "ANBERPOD", font=self.title_font, fill="#f6f8ff")
+        draw.text((614, 18), t("offline_banner"), font=self.small_font, fill="#8ca0bd", anchor="ra")
+        draw.text((22, 76), screen.title, font=self.title_font, fill="#78e0d4")
 
         dense = len(screen.items) > 6
-        y = 132 if dense else 145
+        y = 116 if dense else 128
         if not screen.items:
-            draw.text((32, y), "Nothing here yet", font=self.item_font, fill="#aab7cc")
-            draw.text((32, y + 38), "Local data will appear on this screen.", font=self.small_font, fill="#7587a3")
+            draw.text((32, y), t("nothing_here"), font=self.item_font, fill="#aab7cc")
+            draw.text((32, y + 30), t("nothing_here_hint"), font=self.small_font, fill="#7587a3")
         item_font = self.small_font if dense else self.item_font
-        step = 32 if dense else 50
-        for index, item in enumerate(screen.items[:8]):
+        step = 27 if dense else 42
+        for index, item in enumerate(screen.items[:9]):
             selected = index == screen.focus
             if selected:
-                bottom = y + (25 if dense else 34)
-                draw.rounded_rectangle((24, y - 6, 616, bottom), radius=8, fill="#2b6170", outline="#78e0d4", width=2)
+                bottom = y + (21 if dense else 29)
+                draw.rounded_rectangle((24, y - 5, 616, bottom), radius=7, fill="#2b6170", outline="#78e0d4", width=2)
             prefix = ">" if selected else " "
-            text = item if len(item) <= 46 else item[:43] + "..."
-            draw.text((38, y), f"{prefix} {text}", font=item_font, fill="#ffffff" if selected else "#c6d0df")
+            text = item if len(item) <= 52 else item[:49] + "..."
+            draw.text((36, y), f"{prefix} {text}", font=item_font, fill="#ffffff" if selected else "#c6d0df")
             y += step
 
         if screen.status:
             draw.rounded_rectangle((24, 390, 616, 428), radius=6, fill="#332b18")
-            draw.text((38, 400), screen.status, font=self.small_font, fill="#ffd27d")
+            draw.text((36, 401), screen.status, font=self.small_font, fill="#ffd27d")
         draw.rectangle((0, 444, WIDTH, HEIGHT), fill="#111b30")
         draw.text((320, 462), screen.footer, font=self.small_font, fill="#9eb0c9", anchor="mm")
         return image
 
-    def _render_home(self, screen: ScreenModel) -> Image.Image:
+    def _render_home(self, screen: ScreenModel, t: Translator = _default_translator) -> Image.Image:
         image = Image.new("RGB", (WIDTH, HEIGHT), "#0a1020")
         draw = ImageDraw.Draw(image)
-        draw.rectangle((0, 0, WIDTH, 68), fill="#16233f")
-        draw.rectangle((0, 68, 8, HEIGHT), fill="#36c2b4")
-        draw.text((26, 16), "ANBERPOD", font=self.title_font, fill="#f6f8ff")
-        draw.text((610, 22), "OFFLINE", font=self.small_font, fill="#8ca0bd", anchor="ra")
-        draw.text((26, 79), screen.title, font=self.item_font, fill="#78e0d4")
+        draw.rectangle((0, 0, WIDTH, 60), fill="#16233f")
+        draw.rectangle((0, 60, 8, HEIGHT), fill="#36c2b4")
+        draw.text((22, 14), "ANBERPOD", font=self.title_font, fill="#f6f8ff")
+        draw.text((614, 18), t("offline_banner"), font=self.small_font, fill="#8ca0bd", anchor="ra")
+        draw.text((22, 70), screen.title, font=self.item_font, fill="#78e0d4")
 
         for index, (route, box) in enumerate(zip(HOME_ROUTES, HOME_CARD_BOXES)):
             left, top, right, bottom = box
@@ -145,9 +163,9 @@ class Renderer:
 
             label = screen.items[index] if index < len(screen.items) else route.value.title()
             draw.text(
-                (center_x, bottom - 26),
+                (center_x, bottom - 24),
                 label,
-                font=self.item_font,
+                font=self.small_font,
                 fill="#ffffff" if selected else "#dce3ee",
                 anchor="mm",
             )
@@ -169,29 +187,29 @@ class Renderer:
             fill="#ffffff",
         )
 
-    def save(self, screen: ScreenModel, path: Path) -> None:
+    def save(self, screen: ScreenModel, path: Path, t: Translator = _default_translator) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        self.render(screen).save(path, format="PNG", optimize=False, compress_level=9)
+        self.render(screen, t).save(path, format="PNG", optimize=False, compress_level=9)
 
-    def render_player(self, player: PlayerViewModel) -> Image.Image:
+    def render_player(self, player: PlayerViewModel, t: Translator = _default_translator) -> Image.Image:
         image = Image.new("RGB", (WIDTH, HEIGHT), "#0a1020")
         draw = ImageDraw.Draw(image)
-        draw.rectangle((0, 0, WIDTH, 68), fill="#16233f")
-        draw.rectangle((0, 68, 8, HEIGHT), fill="#36c2b4")
-        draw.text((26, 16), "ANBERPOD", font=self.title_font, fill="#f6f8ff")
-        draw.text((610, 22), player.state.value.upper(), font=self.small_font, fill="#78e0d4", anchor="ra")
-        draw.text((26, 84), "Now Playing", font=self.item_font, fill="#78e0d4")
-        self._draw_player_artwork(image, draw, player.artwork_path)
+        draw.rectangle((0, 0, WIDTH, 60), fill="#16233f")
+        draw.rectangle((0, 60, 8, HEIGHT), fill="#36c2b4")
+        draw.text((22, 14), "ANBERPOD", font=self.title_font, fill="#f6f8ff")
+        draw.text((614, 18), player.state.value.upper(), font=self.small_font, fill="#78e0d4", anchor="ra")
+        draw.text((22, 72), t("player_title"), font=self.item_font, fill="#78e0d4")
+        self._draw_player_artwork(image, draw, player.artwork_path, t)
         title_lines = self._wrap_lines(draw, player.episode_title, self.item_font, 382, 2)
         for index, line in enumerate(title_lines):
-            draw.text((224, 134 + index * 29), line, font=self.item_font, fill="#ffffff")
+            draw.text((224, 128 + index * 25), line, font=self.item_font, fill="#ffffff")
         podcast = self._ellipsize(draw, player.podcast_title, self.small_font, 382)
-        draw.text((224, 202), podcast, font=self.small_font, fill="#9eb0c9")
+        draw.text((224, 198), podcast, font=self.small_font, fill="#9eb0c9")
         state_text = player.state.value.upper()
         state_width = draw.textbbox((0, 0), state_text, font=self.small_font)[2]
-        draw.rounded_rectangle((224, 232, 244 + state_width, 260), radius=7, fill="#263d4b", outline="#36c2b4")
-        draw.text((234, 238), state_text, font=self.small_font, fill="#78e0d4")
-        screen = player.screen()
+        draw.rounded_rectangle((224, 232, 244 + state_width, 258), radius=6, fill="#263d4b", outline="#36c2b4")
+        draw.text((234, 237), state_text, font=self.small_font, fill="#78e0d4")
+        screen = player.screen(t)
         draw.text((32, 316), screen.items[3], font=self.item_font, fill="#f6f8ff")
         draw.rounded_rectangle((32, 350, 608, 370), radius=10, fill="#26334b")
         progress_width = int(576 * player.progress)
@@ -199,7 +217,7 @@ class Renderer:
             draw.rounded_rectangle((32, 350, 32 + progress_width, 370), radius=10, fill="#36c2b4")
         draw.text((32, 384), screen.items[4], font=self.small_font, fill="#c6d0df")
         if player.error_code:
-            error = self._ellipsize(draw, f"Playback error: {player.error_code}", self.small_font, 562)
+            error = self._ellipsize(draw, screen.items[-1], self.small_font, 562)
             draw.rounded_rectangle((24, 406, 616, 438), radius=6, fill="#4a2525")
             draw.text((38, 413), error, font=self.small_font, fill="#ffb0a8")
         draw.rectangle((0, 444, WIDTH, HEIGHT), fill="#111b30")
@@ -211,6 +229,7 @@ class Renderer:
         destination: Image.Image,
         draw: ImageDraw.ImageDraw,
         artwork_path: Path | None,
+        t: Translator = _default_translator,
     ) -> None:
         left, top, right, bottom = PLAYER_ARTWORK_BOX
         cover = self._load_artwork(artwork_path)
@@ -275,6 +294,6 @@ class Renderer:
             lines.append(cls._ellipsize(draw, current, font, max_width))
         return tuple(lines[:max_lines])
 
-    def save_player(self, player: PlayerViewModel, path: Path) -> None:
+    def save_player(self, player: PlayerViewModel, path: Path, t: Translator = _default_translator) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        self.render_player(player).save(path, format="PNG", optimize=False, compress_level=9)
+        self.render_player(player, t).save(path, format="PNG", optimize=False, compress_level=9)

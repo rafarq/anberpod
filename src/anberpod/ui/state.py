@@ -3,8 +3,23 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from typing import Callable
 
 from anberpod.domain.models import DownloadState, InputAction, InputEvent, PlaybackState
+from anberpod.i18n import DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES
+from anberpod.i18n import t as _translate
+
+Translator = Callable[..., str]
+
+
+def _default_translator(key: str, **kwargs: object) -> str:
+    """English fallback translator used when a caller doesn't pass one.
+
+    Keeps ``DownloadsViewModel.screen()``/``PlayerViewModel.screen()``
+    callable without an ``Application`` (as the existing test suite and
+    ``--render-dir``/``--diagnostic`` CLI helpers already do).
+    """
+    return _translate(key, DEFAULT_LANGUAGE, **kwargs)
 
 
 class Route(str, Enum):
@@ -21,6 +36,23 @@ class Route(str, Enum):
 
 
 HOME_ROUTES = (Route.EXPLORE, Route.SEARCH, Route.SUBSCRIPTIONS, Route.DOWNLOADS, Route.SETTINGS)
+
+# Stable display order for the settings language picker: the 15 supported
+# locale codes, in the same order as anberpod.i18n.SUPPORTED_LANGUAGES
+# (mirrors radio.app.state.LANGUAGE_CODES).
+LANGUAGE_CODES = list(SUPPORTED_LANGUAGES)
+
+
+class SettingsView(str, Enum):
+    """Sub-view within :attr:`Route.SETTINGS`.
+
+    Settings is a single ``Route`` with its own tiny nested navigation
+    (menu -> language picker -> back to menu -> back to Home) so the
+    top-level back stack only ever sees one ``Route.SETTINGS`` entry.
+    """
+
+    MENU = "menu"
+    LANGUAGE = "language"
 
 
 @dataclass(frozen=True)
@@ -41,6 +73,24 @@ def _display_bytes(value: int) -> str:
     return f"{value / (1024 * 1024):.1f} MiB"
 
 
+_DOWNLOAD_STATE_KEYS = {
+    DownloadState.QUEUED: "download_state_queued",
+    DownloadState.DOWNLOADING: "download_state_downloading",
+    DownloadState.COMPLETE: "download_state_complete",
+    DownloadState.FAILED: "download_state_failed",
+}
+
+_PLAYBACK_STATE_KEYS = {
+    PlaybackState.IDLE: "playback_state_idle",
+    PlaybackState.BUFFERING: "playback_state_buffering",
+    PlaybackState.PLAYING: "playback_state_playing",
+    PlaybackState.PAUSED: "playback_state_paused",
+    PlaybackState.STOPPED: "playback_state_stopped",
+    PlaybackState.ENDED: "playback_state_ended",
+    PlaybackState.ERROR: "playback_state_error",
+}
+
+
 @dataclass(frozen=True)
 class DownloadItemViewModel:
     episode_id: str
@@ -50,7 +100,7 @@ class DownloadItemViewModel:
     bytes_total: int | None
     error_code: str | None = None
 
-    def display(self) -> str:
+    def display(self, t: Translator = _default_translator) -> str:
         size = _display_bytes(self.bytes_received)
         if self.bytes_total is not None:
             if self.bytes_total >= 1024 * 1024:
@@ -62,22 +112,23 @@ class DownloadItemViewModel:
             else:
                 size = f"{self.bytes_received} / {self.bytes_total} B"
         error = f"  [{self.error_code}]" if self.error_code else ""
-        return f"{self.title}  -  {self.state.value.title()}  {size}{error}"
+        state_label = t(_DOWNLOAD_STATE_KEYS[self.state])
+        return f"{self.title}  -  {state_label}  {size}{error}"
 
 
 @dataclass(frozen=True)
 class DownloadsViewModel:
     items: tuple[DownloadItemViewModel, ...]
 
-    def screen(self, *, focus: int = 0, offline: bool = False) -> ScreenModel:
-        status = "Offline - complete downloads remain playable" if offline else None
+    def screen(self, t: Translator = _default_translator, *, focus: int = 0, offline: bool = False) -> ScreenModel:
+        status = t("downloads_status_offline") if offline else None
         return ScreenModel(
             Route.DOWNLOADS,
-            "Downloads",
-            tuple(item.display() for item in self.items),
+            t("downloads_title"),
+            tuple(item.display(t) for item in self.items),
             focus=focus,
             status=status,
-            footer="D-Pad Navigate   A Open/Actions   B Back   MENU Exit",
+            footer=t("footer_downloads"),
         )
 
 
@@ -108,20 +159,21 @@ class PlayerViewModel:
             return 0.0
         return min(1.0, max(0.0, self.position_ms / self.duration_ms))
 
-    def screen(self) -> ScreenModel:
+    def screen(self, t: Translator = _default_translator) -> ScreenModel:
+        source_label = t("player_source_downloaded") if self.local else t("player_source_streaming")
         items = (
             self.episode_title,
             self.podcast_title,
-            self.state.value.title(),
+            t(_PLAYBACK_STATE_KEYS[self.state]),
             f"{_display_time(self.position_ms)} / {_display_time(self.duration_ms)}",
-            f"Source: {'Downloaded' if self.local else 'Streaming'}",
-            *((f"Error: {self.error_code}",) if self.error_code else ()),
+            t("player_source_label", source=source_label),
+            *((t("player_error_label", code=self.error_code),) if self.error_code else ()),
         )
         return ScreenModel(
             Route.PLAYER,
-            "Now Playing",
+            t("player_title"),
             items,
-            footer="LEFT -15s   A Play/Pause   RIGHT +15s   B Stop",
+            footer=t("footer_player"),
         )
 
 
@@ -192,6 +244,7 @@ class AppState:
         self.exit_requested = False
         self._home_focus = 0
         self._item_count = len(HOME_ROUTES)
+        self.settings_view: SettingsView = SettingsView.MENU
 
     def set_item_count(self, count: int) -> None:
         self._item_count = max(0, count)
@@ -204,10 +257,28 @@ class AppState:
             self.exit_requested = True
             return
         if event.action is InputAction.BACK:
+            if self.route is Route.SETTINGS and self.settings_view is not SettingsView.MENU:
+                # Language picker back to the Settings menu, without popping
+                # the outer back stack (Settings is still one screen).
+                self.settings_view = SettingsView.MENU
+                self.focus = 0
+                self._item_count = 3
+                return
             if self.route is not Route.HOME:
                 self.route = Route.HOME
                 self.focus = self._home_focus
                 self._item_count = len(HOME_ROUTES)
+                self.settings_view = SettingsView.MENU
+            return
+        if self.route is Route.SETTINGS and self.settings_view is SettingsView.LANGUAGE:
+            if event.action is InputAction.DOWN:
+                self.focus = min(self.focus + 1, len(LANGUAGE_CODES) - 1)
+            elif event.action is InputAction.UP:
+                self.focus = max(self.focus - 1, 0)
+            elif event.action is InputAction.LEFT:
+                self.focus = max(self.focus - 1, 0)
+            elif event.action is InputAction.RIGHT:
+                self.focus = min(self.focus + 1, len(LANGUAGE_CODES) - 1)
             return
         if self.route is Route.HOME:
             if event.action is InputAction.LEFT:
@@ -223,6 +294,8 @@ class AppState:
                 self.route = HOME_ROUTES[self.focus]
                 self.focus = 0
                 self._item_count = 0
+                if self.route is Route.SETTINGS:
+                    self.settings_view = SettingsView.MENU
         else:
             if event.action is InputAction.DOWN and self._item_count:
                 self.focus = min(self.focus + 1, self._item_count - 1)
@@ -233,3 +306,5 @@ class AppState:
         self.route = route
         self.focus = 0
         self._item_count = max(0, item_count)
+        if route is Route.SETTINGS:
+            self.settings_view = SettingsView.MENU

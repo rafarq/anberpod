@@ -24,6 +24,7 @@ from anberpod.domain.models import (
     Podcast,
 )
 from anberpod.domain.ports import ArtworkCachePort, Clock, ConnectivityProbe, MonotonicClock, PlaybackEngine
+from anberpod.i18n import DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES, normalize_language, resolve_system_language, t as translate
 from anberpod.services.artwork import ArtworkCache
 from anberpod.logging import configure_logging
 from anberpod.services.startup import recover_local_state
@@ -31,12 +32,14 @@ from anberpod.services.discovery import CatalogCache, DiscoveryService
 from anberpod.services.import_preview import ImportPreview, ImportStatus
 from anberpod.services.playback import PlaybackController, PlaybackSourceSelector
 from anberpod.ui.state import (
+    LANGUAGE_CODES,
     AppState,
     DownloadItemViewModel,
     DownloadsViewModel,
     PlayerViewModel,
     Route,
     ScreenModel,
+    SettingsView,
     VirtualKeyboard,
 )
 
@@ -51,6 +54,7 @@ class Application:
     discovery: DiscoveryService
     playback: PlaybackController
     artwork_cache: ArtworkCachePort
+    language: str = DEFAULT_LANGUAGE
     _shutdown_logged: bool = False
     _selected_podcast_id: str | None = None
     _import_results: tuple[ImportPreview, ...] = ()
@@ -61,6 +65,26 @@ class Application:
     pending_search_query: str | None = None
     _catalog_error_code: str | None = None
     _player: PlayerViewModel | None = None
+
+    def t(self, key: str, **kwargs: object) -> str:
+        """Translate ``key`` for the app's current active language."""
+        return translate(key, self.language, **kwargs)
+
+    def set_language(self, language: str) -> None:
+        """Set the active UI language and persist it (invalid codes fall back to English)."""
+        self.language = normalize_language(language) or DEFAULT_LANGUAGE
+        self.repositories.settings.set("language", self.language)
+
+    def save_selected_language(self) -> None:
+        """Persist the language currently highlighted in the Settings language picker.
+
+        Called on ``A`` while on :attr:`Route.SETTINGS` in
+        :attr:`SettingsView.LANGUAGE`; every screen reads ``app.language``/
+        ``app.t`` fresh each frame, so the very next redraw reflects the new
+        language with no extra signalling needed.
+        """
+        language = LANGUAGE_CODES[self.state.focus % len(LANGUAGE_CODES)]
+        self.set_language(language)
 
     @classmethod
     def open(
@@ -118,7 +142,13 @@ class Application:
             AtomicFiles(paths.root),
             PolicyHttpTransport(UrllibHttpAdapter()),
         )
-        return cls(paths, repositories, connectivity, AppState(), logger, discovery, playback, artwork_cache)
+        # A valid persisted language always wins over system detection, per
+        # the language-resolution rule mirrored from radio.app.state.
+        language = normalize_language(repositories.settings.get("language")) or resolve_system_language()
+        return cls(
+            paths, repositories, connectivity, AppState(), logger, discovery, playback, artwork_cache,
+            language=language,
+        )
 
     def handle(self, event: InputEvent) -> None:
         if self.state.route is Route.PLAYER:
@@ -166,6 +196,18 @@ class Application:
                 if episode_index < len(episodes):
                     self.play_episode(episodes[episode_index])
             return
+        if self.state.route is Route.SETTINGS and event.action is InputAction.ACCEPT and not event.repeated:
+            if self.state.settings_view is SettingsView.MENU and self.state.focus == 1:
+                self.state.settings_view = SettingsView.LANGUAGE
+                self.state.focus = LANGUAGE_CODES.index(self.language) if self.language in LANGUAGE_CODES else 0
+                self.state.set_item_count(len(LANGUAGE_CODES))
+                return
+            if self.state.settings_view is SettingsView.LANGUAGE:
+                self.save_selected_language()
+                self.state.settings_view = SettingsView.MENU
+                self.state.focus = 1
+                self.state.set_item_count(4)
+                return
         self.state.set_item_count(len(self.screen().items))
         self.state.handle(event)
         if self.state.exit_requested and not self._shutdown_logged:
@@ -257,13 +299,19 @@ class Application:
 
     def screen(self, route: Route | None = None) -> ScreenModel:
         selected = route or self.state.route
-        status = None if self.connectivity.is_online() else "Offline - showing saved local data"
+        status = None if self.connectivity.is_online() else self.t("status_offline_library")
         if selected is Route.HOME:
-            items = ("Explore", "Search", "Subscriptions", "Downloads", "Settings")
-            title = "Home"
+            items = (
+                self.t("home_item_explore"),
+                self.t("home_item_search"),
+                self.t("home_item_subscriptions"),
+                self.t("home_item_downloads"),
+                self.t("home_item_settings"),
+            )
+            title = self.t("home_title")
         elif selected is Route.SUBSCRIPTIONS:
             items = tuple(podcast.title for podcast in self.repositories.podcasts.list_subscribed())
-            title = "Subscriptions"
+            title = self.t("subscriptions_title")
         elif selected is Route.DOWNLOADS:
             rows = self.repositories.database.connection.execute(
                 """SELECT episode.id, episode.title, download.state, download.bytes_received,
@@ -274,32 +322,49 @@ class Application:
                 DownloadItemViewModel(row[0], row[1], DownloadState(row[2]), row[3], row[4], row[5])
                 for row in rows
             )).screen(
+                self.t,
                 focus=self.state.focus if selected is self.state.route else 0,
                 offline=not self.connectivity.is_online(),
             )
             return downloads_screen
         elif selected is Route.SETTINGS:
-            items = ("Import RSS file", f"Data: {self.paths.root}", f"Version {__version__}")
-            title = "Settings"
+            if self.state.settings_view is SettingsView.LANGUAGE and selected is self.state.route:
+                items = tuple(SUPPORTED_LANGUAGES[code] for code in LANGUAGE_CODES)
+                title = self.t("settings_language_title")
+                focus = self.state.focus
+                return ScreenModel(
+                    selected, title, items, focus=focus, status=None, footer=self.t("footer_language_picker"),
+                )
+            items = (
+                self.t("settings_menu_import_rss"),
+                self.t("settings_menu_language"),
+                self.t("settings_menu_data", path=self.paths.root),
+                self.t("settings_menu_version", version=__version__),
+            )
+            title = self.t("settings_title")
         elif selected is Route.PODCAST:
             podcast = self.repositories.podcasts.get(self._selected_podcast_id or "")
             if podcast is None:
                 items = ()
-                title = "Podcast"
+                title = self.t("podcast_title_fallback")
             else:
-                action = "Unsubscribe" if self.repositories.podcasts.is_subscribed(podcast.id) else "Subscribe"
+                action = (
+                    self.t("podcast_action_unsubscribe")
+                    if self.repositories.podcasts.is_subscribed(podcast.id)
+                    else self.t("podcast_action_subscribe")
+                )
                 episodes = self.repositories.episodes.list_for_podcast(podcast.id)
-                items = ("Update now", action, *(episode.title for episode in episodes))
+                items = (self.t("podcast_update_now"), action, *(episode.title for episode in episodes))
                 title = podcast.title
         elif selected is Route.RSS_IMPORT:
             items = tuple(
                 f"{item.status.value}  {item.podcast.title if item.podcast else item.error_code or item.url}"
                 for item in self._import_results
             )
-            title = "RSS import"
+            title = self.t("rss_import_title")
         elif selected is Route.PLAYER:
             if self._player is None:
-                return ScreenModel(Route.PLAYER, "Now Playing", (), footer="B Back   MENU Exit")
+                return ScreenModel(Route.PLAYER, self.t("player_title"), (), footer=self.t("footer_player_fallback"))
             return PlayerViewModel(
                 self._player.episode_id,
                 self._player.episode_title,
@@ -310,32 +375,33 @@ class Application:
                 bool(self.playback.source and self.playback.source.local),
                 self.playback.failure.code if self.playback.failure else None,
                 self._player.artwork_path,
-            ).screen()
+            ).screen(self.t)
         elif selected is Route.EXPLORE:
             items = self._categories.items if self._categories is not None else ()
-            title = "Explore"
+            title = self.t("explore_title")
             if self._categories is not None and self._categories.cached:
-                status = f"Saved categories - {self._categories.warning_code or 'cached'}"
+                status = self.t("explore_status_cached", warning=self._categories.warning_code or "cached")
             if self._catalog_error_code == MissingCatalogCredentialsError.code:
-                status = "Configure Podcast Index in data/config/config.toml"
+                status = self.t("explore_status_no_credentials")
         elif selected is Route.SEARCH:
-            items = (f"Query: {self.keyboard.query}_", *self.keyboard.display_rows())
-            title = "Search"
+            items = (self.t("search_query_prefix", query=self.keyboard.query), *self.keyboard.display_rows())
+            title = self.t("search_title")
         else:
             results = self._search_results.items if self._search_results is not None else ()
-            items = tuple(f"{item.title}  -  {item.author or 'Unknown author'}" for item in results)
-            title = f"Results: {self._search_query}"
+            unknown_author = self.t("search_results_unknown_author")
+            items = tuple(f"{item.title}  -  {item.author or unknown_author}" for item in results)
+            title = self.t("search_results_title_prefix", query=self._search_query)
             if self._search_results is not None and self._search_results.cached:
-                status = f"Saved results - {self._search_results.warning_code or 'cached'}"
+                status = self.t("search_results_status_cached", warning=self._search_results.warning_code or "cached")
             if self._catalog_error_code == MissingCatalogCredentialsError.code:
-                status = "Configure Podcast Index in data/config/config.toml"
+                status = self.t("explore_status_no_credentials")
         focus = self.state.focus if selected is self.state.route else 0
         footer = (
-            "Results saved - A Subscribe/Open   B Back   MENU Exit"
+            self.t("footer_rss_import")
             if selected is Route.RSS_IMPORT
-            else "D-Pad Move   A Type/Search   B Delete/Back   MENU Exit"
+            else self.t("footer_search")
             if selected is Route.SEARCH
-            else "D-Pad Navigate   A Select   B Back   MENU Exit"
+            else self.t("footer_default")
         )
         return ScreenModel(selected, title, items, focus=focus, status=status, footer=footer)
 

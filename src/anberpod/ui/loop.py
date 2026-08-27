@@ -181,9 +181,9 @@ def _loop(app: Application, input_reader: InputReader, sdl2, sdl_renderer, textu
 
         player = app.player_view() if screen.route is Route.PLAYER else None
         if player is not None:
-            frame = renderer_model.render_player(player)
+            frame = renderer_model.render_player(player, app.t)
         else:
-            frame = renderer_model.render(screen)
+            frame = renderer_model.render(screen, app.t)
         pixels = frame.tobytes("raw", "RGB")
         sdl2.SDL_UpdateTexture(texture, None, pixels, WIDTH * 3)
         sdl2.SDL_RenderClear(sdl_renderer)
