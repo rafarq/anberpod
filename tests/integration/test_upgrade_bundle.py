@@ -61,7 +61,9 @@ def test_muos_launcher_works_from_path_with_spaces_and_other_cwd(tmp_path: Path)
     environment = os.environ.copy()
     environment["ANBERPOD_PYTHON"] = sys.executable
 
-    result = subprocess.run([str(launcher)], cwd="/", env=environment, capture_output=True, text=True, check=False)
+    result = subprocess.run(
+        [str(launcher), "--diagnostic"], cwd="/", env=environment, capture_output=True, text=True, check=False
+    )
 
     assert result.returncode == 0, result.stderr
     assert (install / "data" / "logs" / "anberpod.log").is_file()

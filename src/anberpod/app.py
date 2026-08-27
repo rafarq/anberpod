@@ -208,6 +208,22 @@ class Application:
     def poll_playback(self) -> tuple[object, ...]:
         return self.playback.poll()
 
+    def player_view(self) -> PlayerViewModel | None:
+        """Current PlayerViewModel with live playback state, or ``None``."""
+        if self._player is None:
+            return None
+        return PlayerViewModel(
+            self._player.episode_id,
+            self._player.episode_title,
+            self._player.podcast_title,
+            self.playback.state,
+            self.playback.position_ms,
+            self.playback.duration_ms,
+            bool(self.playback.source and self.playback.source.local),
+            self.playback.failure.code if self.playback.failure else None,
+            self._player.artwork_path,
+        )
+
     def show_categories(self, result: DiscoveryResult[str]) -> None:
         self._categories = result
         self._catalog_error_code = None

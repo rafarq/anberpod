@@ -22,6 +22,16 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument("--data-dir", type=Path, help="Absolute persistent data directory")
     parser.add_argument("--render-dir", type=Path, help="Write deterministic review PNGs and exit")
     parser.add_argument("--demo", action="store_true", help="Seed the synthetic offline review library")
+    parser.add_argument(
+        "--diagnostic",
+        action="store_true",
+        help="Write one diagnostic PNG and exit instead of entering the SDL2 UI loop",
+    )
+    parser.add_argument(
+        "--input-device",
+        default="/dev/input/event1",
+        help="Physical control device node (D-pad/buttons)",
+    )
     return parser.parse_args()
 
 
@@ -63,9 +73,16 @@ def main() -> int:
             renderer.save(app.screen(), args.render_dir / "rss_import.png")
         names = ", ".join(item.title for item in app.repositories.podcasts.list_subscribed()) or "empty library"
         print(f"Rendered 640x480 review screens with {names}")
-    else:
+    elif args.diagnostic:
         renderer.save(app.screen(Route.HOME), paths.cache / "diagnostic-home.png")
         print("AnberPod diagnostic render complete")
+    else:
+        from anberpod.input.reader import InputReader
+        from anberpod.ui.loop import run
+
+        input_reader = InputReader(args.input_device)
+        run(app, input_reader)
+        return 0
     app.handle(InputEvent(InputAction.MENU))
     return 0
 
