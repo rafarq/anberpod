@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, Iterable, Protocol
 
+from anberpod import __version__
 from anberpod.domain.errors import PlaybackError
 from anberpod.domain.models import PlaybackEvent, PlaybackSource, PlaybackState
 
@@ -132,6 +133,7 @@ class FfmpegAplayConfig:
     remote_timeout_seconds: int = 30
     stop_timeout_seconds: float = 2.0
     stderr_limit_bytes: int = 16 * 1024
+    user_agent: str = f"AnberPod/{__version__}"
 
 
 class FfmpegAplayEngine:
@@ -190,7 +192,7 @@ class FfmpegAplayEngine:
             raise PlaybackError("system aplay could not be launched", code="audio_output_launch_failed") from exc
 
     def _decoder_args(self, source: PlaybackSource, start_seconds: float) -> list[str]:
-        protocols = "file,pipe" if source.local else "https,tcp,tls,crypto"
+        protocols = "file,pipe" if source.local else "http,https,tcp,tls,crypto,httpproxy,data"
         args = [
             str(self.config.decoder_path),
             "-nostdin",
@@ -202,6 +204,7 @@ class FfmpegAplayEngine:
         ]
         if not source.local:
             args.extend([
+                "-user_agent", self.config.user_agent,
                 "-rw_timeout", str(self.config.remote_timeout_seconds * 1_000_000),
                 "-reconnect", "1",
                 "-reconnect_streamed", "1",
@@ -263,11 +266,11 @@ class FfmpegAplayEngine:
         aplay_code = self._aplay.poll()
         if decoder_code is None and aplay_code is None:
             return ()
-        if decoder_code not in (None, 0):
-            code = "decoder_failed"
-            state = PlaybackState.ERROR
-        elif aplay_code not in (None, 0):
+        if aplay_code not in (None, 0):
             code = "audio_output_failed"
+            state = PlaybackState.ERROR
+        elif decoder_code not in (None, 0):
+            code = "decoder_failed"
             state = PlaybackState.ERROR
         elif decoder_code == 0 and aplay_code == 0:
             code = None

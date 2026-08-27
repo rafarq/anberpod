@@ -86,7 +86,11 @@ def test_engine_launches_static_decoder_and_pipes_s16le_pcm_to_aplay(tmp_path: P
     assert ffmpeg_args[-10:] == (
         "-vn", "-f", "s16le", "-acodec", "pcm_s16le", "-ar", "48000", "-ac", "2", "pipe:1"
     )
-    assert "https,tcp,tls,crypto" in ffmpeg_args[ffmpeg_args.index("-protocol_whitelist") + 1]
+    assert ffmpeg_args[ffmpeg_args.index("-protocol_whitelist") + 1] == "http,https,tcp,tls,crypto,httpproxy,data"
+    assert ("-user_agent", engine.config.user_agent) == (
+        ffmpeg_args[ffmpeg_args.index("-user_agent")],
+        ffmpeg_args[ffmpeg_args.index("-user_agent") + 1],
+    )
     assert aplay_args == (
         "/usr/bin/aplay", "--quiet", "--format=S16_LE", "--rate=48000", "--channels=2"
     )
@@ -105,6 +109,7 @@ def test_local_playback_uses_absolute_file_and_seek_restarts_clean_pipeline(tmp_
 
     assert factory.starts[2][0][factory.starts[2][0].index("-i") + 1] == str(media)
     assert "https" not in factory.starts[2][0][factory.starts[2][0].index("-protocol_whitelist") + 1]
+    assert "-user_agent" not in factory.starts[2][0]
     assert old_decoder.calls[0] == ("terminate",)
     assert old_aplay.calls[0] == ("terminate",)
     assert ("kill",) in old_decoder.calls and ("kill",) in old_aplay.calls
@@ -144,6 +149,22 @@ def test_launch_and_child_exit_are_typed_and_stderr_is_bounded(tmp_path: Path) -
     assert events[0].state is PlaybackState.ERROR
     assert events[0].error_code == "decoder_failed"
     assert len(healthy.diagnostic_stderr) <= healthy.config.stderr_limit_bytes
+
+
+def test_events_prioritizes_aplay_failure_over_broken_pipe_decoder_failure(tmp_path: Path) -> None:
+    factory = FakeFactory()
+    engine = FfmpegAplayEngine(config(tmp_path), factory)
+    engine.play(PlaybackSource("https://cdn.example.test/ep.mp3", local=False), 0)
+    decoder, aplay = factory.processes
+
+    # Both fail (e.g. aplay crashes with 1, decoder dies of broken pipe with 1)
+    decoder.returncode = 1
+    aplay.returncode = 1
+
+    events = tuple(engine.events())
+    assert len(events) == 1
+    assert events[0].state is PlaybackState.ERROR
+    assert events[0].error_code == "audio_output_failed"
 
 
 def test_subprocess_factory_never_uses_shell_and_drains_stderr_safely(monkeypatch: pytest.MonkeyPatch) -> None:
